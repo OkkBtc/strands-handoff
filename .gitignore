@@ -1,0 +1,14 @@
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+__pycache__/
+*.py[cod]
+.coverage
+htmlcov/
+*.strandpack
+.DS_Store

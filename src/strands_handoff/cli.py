@@ -1,0 +1,210 @@
+"""Command-line interface for strands-handoff."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+from . import __version__
+from .core import branch_pack, diff_packs, export_session, inspect_pack, summary_markdown
+from .errors import HandoffError, PackIntegrityError, SessionFormatError
+from .pack import extract_pack, load_pack
+
+
+def _artifact_spec(value: str) -> tuple[str, Path]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("artifact must use NAMESPACE=PATH")
+    namespace, path = value.split("=", 1)
+    if not namespace or not path:
+        raise argparse.ArgumentTypeError("artifact must use NAMESPACE=PATH")
+    return namespace, Path(path)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="strands-handoff",
+        description="Export and inspect redacted Strands Agent session handoffs offline.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    export = commands.add_parser("export", help="export a FileSessionManager session")
+    export.add_argument("--storage-dir", type=Path, required=True, help="directory containing session_<id>")
+    export.add_argument("--session-id", required=True)
+    export.add_argument("--handoff-session-id", help="replace a sensitive source session id inside the exported pack")
+    export.add_argument("--output", type=Path, required=True)
+    export.add_argument(
+        "--artifact",
+        type=_artifact_spec,
+        action="append",
+        default=[],
+        metavar="NAMESPACE=PATH",
+        help="add an isolated artifact directory; repeat for multiple namespaces",
+    )
+    export.add_argument(
+        "--allow-binary-artifacts",
+        action="store_true",
+        help="include binary files that cannot be content-redacted",
+    )
+    export.add_argument("--max-artifact-mib", type=float, default=25.0)
+
+    inspect = commands.add_parser("inspect", help="verify and preview pack metadata")
+    inspect.add_argument("pack", type=Path)
+    inspect.add_argument("--json", action="store_true")
+
+    verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
+    verify.add_argument("pack", type=Path)
+    verify.add_argument("--json", action="store_true")
+
+    branch = commands.add_parser("branch", help="create an isolated pack branch")
+    branch.add_argument("pack", type=Path)
+    branch.add_argument("--output", type=Path, required=True)
+    branch.add_argument("--new-session-id", required=True)
+    branch.add_argument("--agent-id")
+    branch.add_argument("--through-message", type=int)
+
+    diff = commands.add_parser("diff", help="compare two verified packs")
+    diff.add_argument("left", type=Path)
+    diff.add_argument("right", type=Path)
+    diff.add_argument("--json", action="store_true")
+
+    summary = commands.add_parser("summary", help="generate a Markdown handoff report")
+    summary.add_argument("pack", type=Path)
+    summary.add_argument("--output", type=Path)
+
+    extract = commands.add_parser("extract", help="extract into a new Strands-compatible storage root")
+    extract.add_argument("pack", type=Path)
+    extract.add_argument("--destination", type=Path, required=True)
+    return parser
+
+
+def _print_json(value: Any) -> None:
+    print(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _run_export(args: argparse.Namespace) -> int:
+    if args.max_artifact_mib <= 0:
+        raise SessionFormatError("max-artifact-mib must be greater than zero")
+    manifest = export_session(
+        storage_dir=args.storage_dir,
+        session_id=args.session_id,
+        output=args.output,
+        handoff_session_id=args.handoff_session_id,
+        artifact_dirs=args.artifact,
+        allow_binary_artifacts=args.allow_binary_artifacts,
+        max_artifact_bytes=int(args.max_artifact_mib * 1024 * 1024),
+    )
+    print(f"Created {args.output} with {len(manifest['files'])} file(s); redactions={manifest['redaction']['total']}")
+    return 0
+
+
+def _run_inspect(args: argparse.Namespace) -> int:
+    details = inspect_pack(args.pack)
+    if args.json:
+        _print_json(details)
+    else:
+        print(f"Integrity: {details['integrity']}")
+        print(f"Session: {details['session_id']}")
+        print(f"Agents/messages: {len(details['agents'])}/{details['messages']}")
+        print(f"Redactions: {details['redaction'].get('total', 0)}")
+        print(f"Artifacts: {details['artifacts']['files']} file(s)")
+        if details["branch"]:
+            print(f"Branch: {details['branch'].get('mode')}")
+    return 0
+
+
+def _run_verify(args: argparse.Namespace) -> int:
+    try:
+        loaded = load_pack(args.pack)
+    except PackIntegrityError as error:
+        if args.json:
+            _print_json({"integrity": "failed", "error": str(error)})
+        else:
+            print(f"FAILED: {error}")
+        return 1
+    result = {"integrity": "ok", "files": len(loaded.files)}
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"OK: {result['files']} file(s) verified")
+    return 0
+
+
+def _run_branch(args: argparse.Namespace) -> int:
+    manifest = branch_pack(
+        args.pack,
+        args.output,
+        new_session_id=args.new_session_id,
+        agent_id=args.agent_id,
+        through_message=args.through_message,
+    )
+    print(f"Created {args.output} ({manifest['branch']['mode']})")
+    return 0
+
+
+def _run_diff(args: argparse.Namespace) -> int:
+    details = diff_packs(args.left, args.right)
+    if args.json:
+        _print_json(details)
+    else:
+        print(f"Sessions: {details['left_session_id']} -> {details['right_session_id']}")
+        print(
+            f"Files added/removed/changed: {len(details['added'])}/{len(details['removed'])}/{len(details['changed'])}"
+        )
+        for agent_id, delta in details["message_delta"].items():
+            print(f"Message delta [{agent_id}]: {delta:+d}")
+    return 0
+
+
+def _run_summary(args: argparse.Namespace) -> int:
+    markdown = summary_markdown(args.pack)
+    if args.output is None:
+        print(markdown, end="")
+        return 0
+    output = args.output.expanduser().resolve()
+    if output.exists():
+        raise PackIntegrityError(f"output already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(markdown, encoding="utf-8")
+    print(f"Created {output}")
+    return 0
+
+
+def _run_extract(args: argparse.Namespace) -> int:
+    destination = extract_pack(args.pack, args.destination)
+    print(f"Extracted to {destination}")
+    return 0
+
+
+_HANDLERS = {
+    "export": _run_export,
+    "inspect": _run_inspect,
+    "verify": _run_verify,
+    "branch": _run_branch,
+    "diff": _run_diff,
+    "summary": _run_summary,
+    "extract": _run_extract,
+}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CLI and return a process status code."""
+    args = _parser().parse_args(argv)
+    try:
+        return _HANDLERS[args.command](args)
+    except HandoffError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+
+def entrypoint() -> None:
+    """Console-script entry point."""
+    raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    entrypoint()

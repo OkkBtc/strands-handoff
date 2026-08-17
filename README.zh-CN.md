@@ -1,0 +1,162 @@
+# strands-handoff
+
+[English](README.md) | **简体中文**
+
+[![CI](https://github.com/OkkBtc/strands-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/OkkBtc/strands-handoff/actions/workflows/ci.yml)
+[![许可证](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+面向 [Strands Agents](https://github.com/strands-agents/harness-sdk) 的离线会话移交、脱敏与完整性检查工具。
+
+`strands-handoff` 将 Python `FileSessionManager` 会话打包为便携的 `.strandpack`，用于审查、传递和比较。全部操作在本地完成，不调用 LLM，也不上传会话数据。
+
+## 功能
+
+- **脱敏导出：** 优先应用已经持久化的 Strands `redact_message`，再处理敏感键以及若干常见凭据、Token、邮箱和用户目录模式。
+- **完整性检查：** 在版本化清单中记录文件大小和 SHA-256，并在查看或提取前验证。
+- **只读检查：** 汇总 Agent、消息、角色、工具调用、脱敏计数和 Artifact，不修改源会话。
+- **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
+- **结构化差异：** 显示新增、删除、变化的文件，以及各 Agent 的消息数量变化。
+- **交接摘要：** 根据已验证的 pack 生成 Markdown 报告。
+- **Artifact 命名空间：** 按显式命名空间打包工具输出，并记录文件数和字节用量。
+- **安全提取：** 拒绝目录穿越、重复条目、符号链接、不支持的顶层路径、清单外文件，以及大小或摘要不匹配。
+
+## 安装
+
+需要 Python 3.10+，运行时没有第三方依赖。
+
+```bash
+git clone https://github.com/OkkBtc/strands-handoff.git
+cd strands-handoff
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+strands-handoff --version
+```
+
+## 快速开始
+
+导出由 Strands `FileSessionManager` 创建的会话：
+
+```bash
+strands-handoff export \
+  --storage-dir ~/.strands/sessions \
+  --session-id support-123 \
+  --output support-123.strandpack
+```
+
+源目录只读。导出器拒绝符号链接和不支持的非 JSON 会话文件。
+
+如果源会话 ID 包含账号或客户身份，可以只替换 pack 内的 ID，无需重命名源目录：
+
+```bash
+strands-handoff export \
+  --storage-dir ~/.strands/sessions \
+  --session-id customer@example.com \
+  --handoff-session-id case-001 \
+  --output case-001.strandpack
+```
+
+不解包就完成验证和只读查看：
+
+```bash
+strands-handoff verify support-123.strandpack
+strands-handoff inspect support-123.strandpack
+strands-handoff inspect support-123.strandpack --json
+```
+
+生成 Markdown 交接报告：
+
+```bash
+strands-handoff summary support-123.strandpack --output HANDOFF.md
+```
+
+使用新会话 ID 创建完整副本分支：
+
+```bash
+strands-handoff branch support-123.strandpack \
+  --new-session-id support-123-qa \
+  --output support-123-qa.strandpack
+```
+
+创建截止到某个 Agent 消息边界的只读审查分支：
+
+```bash
+strands-handoff branch support-123.strandpack \
+  --new-session-id support-123-review \
+  --agent-id triage-agent \
+  --through-message 12 \
+  --output support-123-review.strandpack
+```
+
+不调用模型，直接比较两个 pack：
+
+```bash
+strands-handoff diff support-123.strandpack support-123-review.strandpack
+strands-handoff diff support-123.strandpack support-123-review.strandpack --json
+```
+
+将完整副本 pack 提取到新的存储根目录：
+
+```bash
+strands-handoff extract support-123-qa.strandpack --destination ./received-sessions
+```
+
+结果包含 `received-sessions/session_support-123-qa/`。恢复时需要兼容的 Strands 版本、相同的 Agent 身份以及兼容的 Agent 配置。已有目标目录不会被覆盖；消息边界审查分支不能提取为运行时会话。
+
+## Artifact 打包
+
+每个 Artifact 目录都必须指定独立命名空间：
+
+```bash
+strands-handoff export \
+  --storage-dir ~/.strands/sessions \
+  --session-id support-123 \
+  --artifact research=./artifacts/research \
+  --artifact screenshots=./artifacts/screenshots \
+  --output support-123.strandpack
+```
+
+UTF-8 文本和 JSON Artifact 会经过脱敏；文件路径一旦命中已知敏感模式就会被拒绝。其他类型按二进制处理，由于无法可靠扫描内容，默认阻止；只有人工检查后才应使用 `--allow-binary-artifacts`，且清单会记录未扫描的二进制文件数量。单文件默认上限为 25 MiB，可用 `--max-artifact-mib` 调整。
+
+## Pack 格式
+
+`.strandpack` 是如下结构的 ZIP 容器：
+
+```text
+manifest.json
+session/session.json
+session/agents/agent_<id>/agent.json
+session/agents/agent_<id>/messages/message_<n>.json
+artifacts/<namespace>/...
+```
+
+清单记录兼容性参考、脱敏分类计数、Artifact 用量、文件大小和 SHA-256。校验能够发现与清单不一致的文件，但不能认证 pack 创建者，也不能替代数字签名。
+
+## 兼容性与限制
+
+- 当前支持 [UPSTREAM.md](UPSTREAM.md) 中说明的 Python `FileSessionManager` 消息日志结构，不支持 Strands snapshot 存储。
+- 完整副本分支使用新的会话 ID 保留已导出的元数据和消息；能否成功恢复仍取决于兼容的 Strands、Agent ID、工具和状态结构。
+- 消息边界分支只删除之后的消息文件，用于离线审查和比较。由于 `agent.json` 保存的是最新状态，它不是运行时回退，并被标记为 `restorable: false`。
+- 模式脱敏不是完整的秘密或个人信息扫描器。分享前仍需人工检查，尤其是允许二进制 Artifact 时。
+- CLI 不执行工具、不重放模型调用、不上传 pack，也不实现 Strands 运行时编排器的 Agent handoff。
+
+## 开发与验证
+
+```bash
+python -m pip install -e '.[dev]'
+ruff check .
+ruff format --check .
+pyright
+pytest
+python -m build
+```
+
+全部测试使用合成会话运行，不需要 Provider 凭据。
+
+## 安全
+
+不要在公开 Issue 中附带真实 session pack、Token 或客户数据。私密报告方式和安全边界见 [SECURITY.md](SECURITY.md)。
+
+## 许可证与上游
+
+`strands-handoff` 使用 Apache-2.0 许可证。本项目是独立社区项目，与 Strands Agents 维护者不存在关联，也未获得其背书。兼容性参考与归属说明见 [UPSTREAM.md](UPSTREAM.md) 和 [NOTICE](NOTICE)。

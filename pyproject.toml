@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "strands-handoff"
+version = "0.1.0"
+description = "Offline Strands session handoff with redaction and integrity checks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "OkkBtc" }]
+keywords = ["agents", "strands-agents", "session", "handoff", "redaction"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2,<2",
+  "pyright>=1.1.400,<2",
+  "pytest>=8.3,<9",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+strands-handoff = "strands_handoff.cli:entrypoint"
+
+[project.urls]
+Homepage = "https://github.com/OkkBtc/strands-handoff"
+Repository = "https://github.com/OkkBtc/strands-handoff"
+Issues = "https://github.com/OkkBtc/strands-handoff/issues"
+Upstream = "https://github.com/strands-agents/harness-sdk"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strands_handoff"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
