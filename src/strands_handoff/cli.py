@@ -37,6 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--session-id", required=True)
     export.add_argument("--handoff-session-id", help="replace a sensitive source session id inside the exported pack")
     export.add_argument("--output", type=Path, required=True)
+    export.add_argument("--json", action="store_true")
     export.add_argument(
         "--artifact",
         type=_artifact_spec,
@@ -98,7 +99,16 @@ def _run_export(args: argparse.Namespace) -> int:
         allow_binary_artifacts=args.allow_binary_artifacts,
         max_artifact_bytes=int(args.max_artifact_mib * 1024 * 1024),
     )
-    print(f"Created {args.output} with {len(manifest['files'])} file(s); redactions={manifest['redaction']['total']}")
+    result = {
+        "pack": str(args.output.expanduser().resolve()),
+        "files": len(manifest["files"]),
+        "redactions": manifest["redaction"]["total"],
+        "artifacts": manifest["artifacts"],
+    }
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Created {args.output} with {result['files']} file(s); redactions={result['redactions']}")
     return 0
 
 

@@ -28,6 +28,44 @@ def test_cli_end_to_end(session_storage: Path, tmp_path: Path, capsys) -> None:
     assert '"session_id": "demo"' in capsys.readouterr().out
 
 
+def test_cli_export_json_returns_machine_readable_summary(session_storage: Path, tmp_path: Path, capsys) -> None:
+    pack = tmp_path / "demo.strandpack"
+    artifacts = tmp_path / "research"
+    artifacts.mkdir()
+    (artifacts / "notes.txt").write_text("synthetic notes", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "export",
+                "--storage-dir",
+                str(session_storage),
+                "--session-id",
+                "demo",
+                "--artifact",
+                f"research={artifacts}",
+                "--output",
+                str(pack),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["pack"] == str(pack.resolve())
+    assert result["files"] > 0
+    assert isinstance(result["redactions"], int)
+    assert result["artifacts"] == [
+        {
+            "binary_files_unscanned": 0,
+            "bytes": len("synthetic notes"),
+            "file_count": 1,
+            "namespace": "research",
+        }
+    ]
+
+
 def test_cli_verify_returns_one_for_tampered_pack(session_storage: Path, tmp_path: Path, capsys) -> None:
     pack = tmp_path / "demo.strandpack"
     assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0
