@@ -9,16 +9,19 @@ Offline session handoff with redaction and integrity checks for [Strands Agents]
 
 `strands-handoff` packages Python `FileSessionManager` sessions into portable `.strandpack` files for review, transfer, and comparison. It runs locally without calling an LLM or uploading session data.
 
+Redaction is best-effort and the current implementation has not undergone an independent security audit. It does not replace a comprehensive secret or PII scanner; review every pack before transferring it.
+
 ## Features
 
-- **Redacted export:** honors persisted Strands `redact_message` replacements, then redacts sensitive keys and several common credential, token, email, and home-directory patterns.
+- **Best-effort redacted export:** honors persisted Strands `redact_message` replacements, then redacts sensitive keys and several common credential, token, email, and home-directory patterns.
 - **Integrity checks:** records file sizes and SHA-256 digests in a versioned manifest and verifies them before inspection or extraction.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
 - **Namespaced artifacts:** packages tool outputs under explicit namespaces with file-count and byte-usage metadata.
-- **Safe extraction:** rejects path traversal, duplicate entries, symlinks, unsupported top-level paths, unlisted files, size mismatches, and digest mismatches.
+- **Automation-friendly output:** emits JSON summaries for export, verification, inspection, and diff workflows.
+- **Defensive extraction:** rejects path traversal, duplicate entries, symlinks, unsupported top-level paths, unlisted files, size mismatches, and digest mismatches.
 
 ## Install
 
@@ -46,12 +49,22 @@ strands-handoff export \
 
 The source directory is only read. The exporter rejects symlinks and unsupported non-JSON session files.
 
+For a machine-readable result containing the resolved pack path, packaged file count, redaction count, and artifact metadata:
+
+```bash
+strands-handoff export \
+  --storage-dir ~/.strands/sessions \
+  --session-id support-123 \
+  --output support-123.strandpack \
+  --json > export-result.json
+```
+
 If the source session ID contains an account or customer identifier, replace it inside the pack without renaming the source directory:
 
 ```bash
 strands-handoff export \
   --storage-dir ~/.strands/sessions \
-  --session-id customer@example.com \
+  --session-id account-123 \
   --handoff-session-id case-001 \
   --output case-001.strandpack
 ```
@@ -60,6 +73,7 @@ Verify and preview without extracting:
 
 ```bash
 strands-handoff verify support-123.strandpack
+strands-handoff verify support-123.strandpack --json
 strands-handoff inspect support-123.strandpack
 strands-handoff inspect support-123.strandpack --json
 ```
@@ -101,7 +115,7 @@ Extract a full-copy pack into a new storage root:
 strands-handoff extract support-123-qa.strandpack --destination ./received-sessions
 ```
 
-The result contains `received-sessions/session_support-123-qa/`. Restoring it requires a compatible Strands version and the same agent identity and compatible agent configuration. Existing destinations are never overwritten. Review-only message-boundary branches cannot be extracted as runtime sessions.
+The result contains `received-sessions/session_support-123-qa/`. Extraction only validates and writes the storage tree; the CLI does not launch Strands or verify runtime restoration. Restoration requires a compatible Strands version, the same agent identity, and compatible agent configuration. Existing destinations are never overwritten. Review-only message-boundary branches cannot be extracted as runtime sessions.
 
 ## Artifact packaging
 
@@ -134,7 +148,7 @@ The manifest records the compatibility reference, redaction counts, artifact usa
 
 ## Compatibility and limitations
 
-- The current release supports the Python `FileSessionManager` message-log layout described in [UPSTREAM.md](UPSTREAM.md). Strands snapshot storage is not supported.
+- The current implementation supports the Python `FileSessionManager` message-log layout described in [UPSTREAM.md](UPSTREAM.md). Strands snapshot storage is not supported.
 - A full-copy branch preserves the exported session metadata and messages under a new session ID. Successful restoration still depends on compatible Strands, agent IDs, tools, and state structure.
 - A message-boundary branch removes later message files for offline review and comparison. Because `agent.json` contains latest-state metadata, this is not a runtime rewind and is marked `restorable: false`.
 - Pattern-based redaction is not a comprehensive secret or PII scanner. Review a pack before sharing it, especially when binary artifacts are enabled.
