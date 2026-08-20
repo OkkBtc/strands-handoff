@@ -81,3 +81,30 @@ def test_cli_verify_returns_one_for_tampered_pack(session_storage: Path, tmp_pat
 
     assert main(["verify", str(bad)]) == 1
     assert "FAILED" in capsys.readouterr().out
+
+
+def test_cli_verify_multiple_packs_reports_every_result(session_storage: Path, tmp_path: Path, capsys) -> None:
+    good = tmp_path / "good.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(good)]) == 0
+    bad = tmp_path / "bad.strandpack"
+    with zipfile.ZipFile(good) as source, zipfile.ZipFile(bad, "w") as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "session/session.json":
+                value = json.loads(data)
+                value["session_id"] = "changed"
+                data = json.dumps(value).encode()
+            target.writestr(info, data)
+    capsys.readouterr()
+
+    assert main(["verify", str(good), str(bad), "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["summary"] == {"total": 2, "passed": 1, "failed": 1}
+    assert [pack["integrity"] for pack in result["packs"]] == ["ok", "failed"]
+    assert [pack["pack"] for pack in result["packs"]] == [str(good.resolve()), str(bad.resolve())]
+
+    assert main(["verify", str(good), str(bad)]) == 1
+    output = capsys.readouterr().out
+    assert f"OK {good.resolve()}" in output
+    assert f"FAILED {bad.resolve()}" in output
+    assert "Verified 1/2 pack(s); failed=1" in output

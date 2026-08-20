@@ -15,6 +15,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 
 - **Best-effort redacted export:** honors persisted Strands `redact_message` replacements, then redacts sensitive keys and several common credential, token, email, and home-directory patterns.
 - **Integrity checks:** records file sizes and SHA-256 digests in a versioned manifest and verifies them before inspection or extraction.
+- **Batch verification:** checks multiple packs in one command and reports every result before returning a combined exit status.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes.
@@ -77,6 +78,17 @@ strands-handoff verify support-123.strandpack --json
 strands-handoff inspect support-123.strandpack
 strands-handoff inspect support-123.strandpack --json
 ```
+
+Verify a batch before transfer or archival:
+
+```bash
+strands-handoff verify support-123.strandpack support-124.strandpack
+strands-handoff verify support-123.strandpack support-124.strandpack \
+  --json > verification.json
+```
+
+Every supplied pack is checked even when an earlier one fails. The command exits
+with status `1` if any pack fails verification.
 
 Generate a Markdown handoff report:
 
