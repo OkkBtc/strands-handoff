@@ -15,6 +15,7 @@
 
 - **尽力脱敏导出：** 优先应用已经持久化的 Strands `redact_message`，再处理敏感键以及若干常见凭据、Token、邮箱和用户目录模式。
 - **完整性检查：** 在版本化清单中记录文件大小和 SHA-256，并在查看或提取前验证。
+- **批量校验：** 一条命令检查多个 pack，输出全部结果后再返回统一退出状态。
 - **只读检查：** 汇总 Agent、消息、角色、工具调用、脱敏计数和 Artifact，不修改源会话。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
 - **结构化差异：** 显示新增、删除、变化的文件，以及各 Agent 的消息数量变化。
@@ -77,6 +78,17 @@ strands-handoff verify support-123.strandpack --json
 strands-handoff inspect support-123.strandpack
 strands-handoff inspect support-123.strandpack --json
 ```
+
+在传递或归档前批量校验：
+
+```bash
+strands-handoff verify support-123.strandpack support-124.strandpack
+strands-handoff verify support-123.strandpack support-124.strandpack \
+  --json > verification.json
+```
+
+即使前面的 pack 失败，命令仍会检查所有输入；只要任意 pack 校验失败，最终退出状态
+就是 `1`。
 
 生成 Markdown 交接报告：
 

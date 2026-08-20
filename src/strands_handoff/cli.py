@@ -58,8 +58,8 @@ def _parser() -> argparse.ArgumentParser:
     inspect.add_argument("--json", action="store_true")
 
     verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
-    verify.add_argument("pack", type=Path)
-    verify.add_argument("--json", action="store_true")
+    verify.add_argument("pack", type=Path, nargs="+", metavar="PACK", help="one or more pack files")
+    verify.add_argument("--json", action="store_true", help="emit machine-readable verification results")
 
     branch = commands.add_parser("branch", help="create an isolated pack branch")
     branch.add_argument("pack", type=Path)
@@ -127,21 +127,46 @@ def _run_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_verify(args: argparse.Namespace) -> int:
+def _verify_pack(pack: Path) -> dict[str, Any]:
     try:
-        loaded = load_pack(args.pack)
+        loaded = load_pack(pack)
     except PackIntegrityError as error:
+        return {
+            "pack": str(pack.expanduser().resolve()),
+            "integrity": "failed",
+            "error": str(error),
+        }
+    return {
+        "pack": str(pack.expanduser().resolve()),
+        "integrity": "ok",
+        "files": len(loaded.files),
+    }
+
+
+def _run_verify(args: argparse.Namespace) -> int:
+    results = [_verify_pack(pack) for pack in args.pack]
+    failed = sum(result["integrity"] == "failed" for result in results)
+    if len(results) == 1:
+        result = {key: value for key, value in results[0].items() if key != "pack"}
         if args.json:
-            _print_json({"integrity": "failed", "error": str(error)})
+            _print_json(result)
+        elif result["integrity"] == "ok":
+            print(f"OK: {result['files']} file(s) verified")
         else:
-            print(f"FAILED: {error}")
-        return 1
-    result = {"integrity": "ok", "files": len(loaded.files)}
+            print(f"FAILED: {result['error']}")
+        return int(failed > 0)
+
+    summary = {"total": len(results), "passed": len(results) - failed, "failed": failed}
     if args.json:
-        _print_json(result)
+        _print_json({"summary": summary, "packs": results})
     else:
-        print(f"OK: {result['files']} file(s) verified")
-    return 0
+        for result in results:
+            if result["integrity"] == "ok":
+                print(f"OK {result['pack']}: {result['files']} file(s) verified")
+            else:
+                print(f"FAILED {result['pack']}: {result['error']}")
+        print(f"Verified {summary['passed']}/{summary['total']} pack(s); failed={failed}")
+    return int(failed > 0)
 
 
 def _run_branch(args: argparse.Namespace) -> int:
