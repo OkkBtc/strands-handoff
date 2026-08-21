@@ -9,7 +9,7 @@ import pytest
 
 from strands_handoff.core import branch_pack, diff_packs, export_session, inspect_pack, summary_markdown
 from strands_handoff.errors import PackIntegrityError, SessionFormatError
-from strands_handoff.pack import MANIFEST_PATH, extract_pack, load_pack
+from strands_handoff.pack import MANIFEST_PATH, extract_pack, load_pack, prepare_extraction
 
 
 def _export(session_storage: Path, destination: Path, **kwargs: object) -> Path:
@@ -106,6 +106,8 @@ def test_message_boundary_branch_is_review_only(session_storage: Path, tmp_path:
     assert manifest["branch"]["removed_messages"] == 1
     with pytest.raises(PackIntegrityError, match="review-only"):
         extract_pack(branch, tmp_path / "must-not-run")
+    with pytest.raises(PackIntegrityError, match="review-only"):
+        prepare_extraction(branch, tmp_path / "dry-run-must-not-run")
 
 
 def test_diff_reports_branch_changes(session_storage: Path, tmp_path: Path) -> None:
@@ -141,6 +143,20 @@ def test_extract_creates_new_strands_storage_root(session_storage: Path, tmp_pat
     assert (destination / "strandpack-manifest.json").is_file()
     with pytest.raises(PackIntegrityError, match="already exists"):
         extract_pack(pack, destination)
+
+
+def test_prepare_extraction_validates_without_writing(session_storage: Path, tmp_path: Path) -> None:
+    pack = _export(session_storage, tmp_path / "demo.strandpack")
+    destination = tmp_path / "missing-parent" / "received"
+
+    plan = prepare_extraction(pack, destination)
+
+    assert plan.pack == pack.resolve()
+    assert plan.destination == destination.resolve()
+    assert plan.session_directory == destination.resolve() / "session_demo"
+    assert plan.file_count == len(load_pack(pack).files) + 1
+    assert not destination.exists()
+    assert not destination.parent.exists()
 
 
 def test_artifacts_are_namespaced_and_text_redacted(session_storage: Path, tmp_path: Path) -> None:

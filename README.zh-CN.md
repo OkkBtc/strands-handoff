@@ -21,7 +21,8 @@
 - **结构化差异：** 显示新增、删除、变化的文件，以及各 Agent 的消息数量变化。
 - **交接摘要：** 根据已验证的 pack 生成 Markdown 报告。
 - **Artifact 命名空间：** 按显式命名空间打包工具输出，并记录文件数和字节用量。
-- **适合自动化的输出：** 为导出、验证、检查和差异比较提供 JSON 摘要。
+- **适合自动化的输出：** 为导出、验证、检查、差异比较和提取提供 JSON 摘要。
+- **提取预演：** 写入前先验证 pack，并报告准确的目标会话目录。
 - **防御性提取：** 拒绝目录穿越、重复条目、符号链接、不支持的顶层路径、清单外文件，以及大小或摘要不匹配。
 
 ## 安装
@@ -121,13 +122,29 @@ strands-handoff diff support-123.strandpack support-123-review.strandpack
 strands-handoff diff support-123.strandpack support-123-review.strandpack --json
 ```
 
-将完整副本 pack 提取到新的存储根目录：
+验证完整副本 pack，并在不写入任何内容的前提下预览准确目标：
+
+```bash
+strands-handoff extract support-123-qa.strandpack \
+  --destination ./received-sessions \
+  --dry-run \
+  --json
+```
+
+计划会显示解析后的目标根目录、`session_<id>` 目录和将写入的文件数，并验证 pack
+完整性、可恢复标记、会话 ID 和目标目录冲突。预演不会创建目标目录或临时目录，但
+不能证明最终写入时一定有足够磁盘空间或写权限。
+
+确认计划后再执行提取：
 
 ```bash
 strands-handoff extract support-123-qa.strandpack --destination ./received-sessions
+strands-handoff extract support-123-qa.strandpack \
+  --destination ./received-sessions \
+  --json
 ```
 
-结果包含 `received-sessions/session_support-123-qa/`。提取只负责验证并写出存储目录，CLI 不会启动 Strands，也不会验证运行时恢复。恢复仍需要兼容的 Strands 版本、相同的 Agent 身份以及兼容的 Agent 配置。已有目标目录不会被覆盖；消息边界审查分支不能提取为运行时会话。
+结果包含 `received-sessions/session_support-123-qa/`。提取只负责验证并写出存储目录；无论预演还是实际提取，CLI 都不会启动 Strands，也不会验证运行时恢复。恢复仍需要兼容的 Strands 版本、相同的 Agent 身份以及兼容的 Agent 配置。已有目标目录不会被覆盖；消息边界审查分支不能提取为运行时会话。
 
 ## Artifact 打包
 

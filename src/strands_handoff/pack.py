@@ -10,7 +10,7 @@ import stat
 import tempfile
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -31,6 +31,22 @@ class LoadedPack:
 
     manifest: dict[str, Any]
     files: dict[str, bytes]
+
+
+@dataclass(frozen=True)
+class ExtractionPlan:
+    """A verified extraction target that has not been written yet."""
+
+    pack: Path
+    destination: Path
+    session_directory: Path
+    file_count: int
+    _loaded: LoadedPack = field(repr=False, compare=False)
+
+    def execute(self) -> Path:
+        """Write this verified plan without re-reading the pack."""
+        _execute_extraction(self)
+        return self.destination
 
 
 def utc_now() -> str:
@@ -184,8 +200,8 @@ def load_pack(path: Path) -> LoadedPack:
     return LoadedPack(manifest=manifest, files=data)
 
 
-def extract_pack(path: Path, destination: Path) -> Path:
-    """Verify and extract a pack into a new Strands-compatible storage root."""
+def prepare_extraction(path: Path, destination: Path) -> ExtractionPlan:
+    """Verify a pack and return its extraction plan without writing anything."""
     loaded = load_pack(path)
     branch = loaded.manifest.get("branch")
     if isinstance(branch, dict) and branch.get("restorable") is False:
@@ -198,14 +214,26 @@ def extract_pack(path: Path, destination: Path) -> Path:
     destination = destination.expanduser().resolve()
     if destination.exists():
         raise PackIntegrityError(f"destination already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.parent / f".{destination.name}.tmp-{uuid.uuid4().hex}"
+    return ExtractionPlan(
+        pack=path.expanduser().resolve(),
+        destination=destination,
+        session_directory=destination / f"session_{session_id}",
+        file_count=len(loaded.files) + 1,
+        _loaded=loaded,
+    )
+
+
+def _execute_extraction(plan: ExtractionPlan) -> None:
+    if plan.destination.exists():
+        raise PackIntegrityError(f"destination already exists: {plan.destination}")
+    plan.destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = plan.destination.parent / f".{plan.destination.name}.tmp-{uuid.uuid4().hex}"
     temporary.mkdir(mode=0o700)
     try:
-        for name, contents in loaded.files.items():
+        for name, contents in plan._loaded.files.items():
             relative = PurePosixPath(name)
             if relative.parts[0] == "session":
-                target = temporary / f"session_{session_id}" / Path(*relative.parts[1:])
+                target = temporary / plan.session_directory.name / Path(*relative.parts[1:])
             elif relative.parts[0] == "artifacts":
                 target = temporary / Path(*relative.parts)
             else:
@@ -215,12 +243,18 @@ def extract_pack(path: Path, destination: Path) -> Path:
             os.chmod(target, 0o600)
         manifest_copy = temporary / "strandpack-manifest.json"
         manifest_copy.write_text(
-            json.dumps(loaded.manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            json.dumps(plan._loaded.manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         os.chmod(manifest_copy, 0o600)
-        os.replace(temporary, destination)
+        if plan.destination.exists():
+            raise PackIntegrityError(f"destination already exists: {plan.destination}")
+        os.replace(temporary, plan.destination)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
-    return destination
+
+
+def extract_pack(path: Path, destination: Path) -> Path:
+    """Verify and extract a pack into a new Strands-compatible storage root."""
+    return prepare_extraction(path, destination).execute()
