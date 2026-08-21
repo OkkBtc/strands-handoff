@@ -21,7 +21,8 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
 - **Namespaced artifacts:** packages tool outputs under explicit namespaces with file-count and byte-usage metadata.
-- **Automation-friendly output:** emits JSON summaries for export, verification, inspection, and diff workflows.
+- **Automation-friendly output:** emits JSON summaries for export, verification, inspection, diff, and extraction workflows.
+- **Extraction preview:** validates the pack and reports the exact target session directory before writing anything.
 - **Defensive extraction:** rejects path traversal, duplicate entries, symlinks, unsupported top-level paths, unlisted files, size mismatches, and digest mismatches.
 
 ## Install
@@ -121,13 +122,31 @@ strands-handoff diff support-123.strandpack support-123-review.strandpack
 strands-handoff diff support-123.strandpack support-123-review.strandpack --json
 ```
 
-Extract a full-copy pack into a new storage root:
+Validate a full-copy pack and preview its exact extraction target without writing:
+
+```bash
+strands-handoff extract support-123-qa.strandpack \
+  --destination ./received-sessions \
+  --dry-run \
+  --json
+```
+
+The plan includes the resolved destination root, `session_<id>` directory, and
+the number of files that would be written. It verifies pack integrity,
+restorability metadata, the session ID, and destination conflicts. A dry run
+does not create the destination or temporary directories, but it cannot prove
+that enough disk space or final write permissions will be available.
+
+Extract the pack after reviewing the plan:
 
 ```bash
 strands-handoff extract support-123-qa.strandpack --destination ./received-sessions
+strands-handoff extract support-123-qa.strandpack \
+  --destination ./received-sessions \
+  --json
 ```
 
-The result contains `received-sessions/session_support-123-qa/`. Extraction only validates and writes the storage tree; the CLI does not launch Strands or verify runtime restoration. Restoration requires a compatible Strands version, the same agent identity, and compatible agent configuration. Existing destinations are never overwritten. Review-only message-boundary branches cannot be extracted as runtime sessions.
+The result contains `received-sessions/session_support-123-qa/`. Extraction only validates and writes the storage tree; neither a dry run nor extraction launches Strands or verifies runtime restoration. Restoration requires a compatible Strands version, the same agent identity, and compatible agent configuration. Existing destinations are never overwritten. Review-only message-boundary branches cannot be extracted as runtime sessions.
 
 ## Artifact packaging
 

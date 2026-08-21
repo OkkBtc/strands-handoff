@@ -12,7 +12,7 @@ from typing import Any
 from . import __version__
 from .core import branch_pack, diff_packs, export_session, inspect_pack, summary_markdown
 from .errors import HandoffError, PackIntegrityError, SessionFormatError
-from .pack import extract_pack, load_pack
+from .pack import load_pack, prepare_extraction
 
 
 def _artifact_spec(value: str) -> tuple[str, Path]:
@@ -80,6 +80,8 @@ def _parser() -> argparse.ArgumentParser:
     extract = commands.add_parser("extract", help="extract into a new Strands-compatible storage root")
     extract.add_argument("pack", type=Path)
     extract.add_argument("--destination", type=Path, required=True)
+    extract.add_argument("--dry-run", action="store_true", help="verify and show the extraction plan without writing")
+    extract.add_argument("--json", action="store_true", help="emit a machine-readable extraction plan or result")
     return parser
 
 
@@ -210,8 +212,22 @@ def _run_summary(args: argparse.Namespace) -> int:
 
 
 def _run_extract(args: argparse.Namespace) -> int:
-    destination = extract_pack(args.pack, args.destination)
-    print(f"Extracted to {destination}")
+    plan = prepare_extraction(args.pack, args.destination)
+    result = {
+        "pack": str(plan.pack),
+        "destination": str(plan.destination),
+        "session_directory": str(plan.session_directory),
+        "files": plan.file_count,
+        "dry_run": args.dry_run,
+    }
+    if not args.dry_run:
+        plan.execute()
+    if args.json:
+        _print_json(result)
+    elif args.dry_run:
+        print(f"Validated {plan.pack}; would extract {plan.file_count} file(s) to {plan.destination}")
+    else:
+        print(f"Extracted {plan.file_count} file(s) to {plan.destination}")
     return 0
 
 

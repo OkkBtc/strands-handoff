@@ -108,3 +108,33 @@ def test_cli_verify_multiple_packs_reports_every_result(session_storage: Path, t
     assert f"OK {good.resolve()}" in output
     assert f"FAILED {bad.resolve()}" in output
     assert "Verified 1/2 pack(s); failed=1" in output
+
+
+def test_cli_extract_dry_run_then_extract_json(session_storage: Path, tmp_path: Path, capsys) -> None:
+    pack = tmp_path / "demo.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0
+    capsys.readouterr()
+    destination = tmp_path / "missing-parent" / "received"
+    command = ["extract", str(pack), "--destination", str(destination), "--json"]
+
+    assert main([*command, "--dry-run"]) == 0
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run == {
+        "destination": str(destination.resolve()),
+        "dry_run": True,
+        "files": dry_run["files"],
+        "pack": str(pack.resolve()),
+        "session_directory": str(destination.resolve() / "session_demo"),
+    }
+    assert dry_run["files"] > 1
+    assert not destination.exists()
+    assert not destination.parent.exists()
+
+    assert main(command) == 0
+    extracted = json.loads(capsys.readouterr().out)
+    assert extracted == {**dry_run, "dry_run": False}
+    assert (destination / "session_demo" / "session.json").is_file()
+    assert sum(path.is_file() for path in destination.rglob("*")) == extracted["files"]
+
+    assert main([*command, "--dry-run"]) == 2
+    assert "destination already exists" in capsys.readouterr().err
