@@ -17,6 +17,8 @@
 - **完整性检查：** 在版本化清单中记录文件大小和 SHA-256，并在查看或提取前验证。
 - **批量校验：** 一条命令检查多个 pack，输出全部结果后再返回统一退出状态。
 - **只读检查：** 汇总 Agent、消息、角色、工具调用、脱敏计数和 Artifact，不修改源会话。
+- **已验证文件清单：** 完整性检查通过后，可列出每个打包路径、字节数和清单 SHA-256。
+- **传输指纹：** 可计算完整 `.strandpack` 文件的哈希，用于传输前后核对。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
 - **结构化差异：** 显示新增、删除、变化的文件，以及各 Agent 的消息数量变化。
 - **交接摘要：** 根据已验证的 pack 生成 Markdown 报告。
@@ -79,6 +81,20 @@ strands-handoff verify support-123.strandpack --json
 strands-handoff inspect support-123.strandpack
 strands-handoff inspect support-123.strandpack --json
 ```
+
+审计准确的打包路径，并为传输记录生成指纹：
+
+```bash
+strands-handoff inspect support-123.strandpack --files
+strands-handoff inspect support-123.strandpack \
+  --files \
+  --sha256 \
+  --json > inventory.json
+```
+
+`--files` 会输出每个载荷文件在已验证清单中的路径、大小和 SHA-256；`--sha256`
+会计算 `.strandpack` 归档准确字节的哈希，可在复制或上传前后进行比较。这两类摘要都
+不能认证创建者，也不能替代数字签名。
 
 在传递或归档前批量校验：
 

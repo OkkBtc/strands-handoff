@@ -17,6 +17,8 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Integrity checks:** records file sizes and SHA-256 digests in a versioned manifest and verifies them before inspection or extraction.
 - **Batch verification:** checks multiple packs in one command and reports every result before returning a combined exit status.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
+- **Verified file inventory:** optionally lists every packaged path, byte size, and manifest SHA-256 after integrity checks pass.
+- **Transfer fingerprint:** optionally hashes the complete `.strandpack` file for before/after transfer comparison.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
@@ -79,6 +81,21 @@ strands-handoff verify support-123.strandpack --json
 strands-handoff inspect support-123.strandpack
 strands-handoff inspect support-123.strandpack --json
 ```
+
+Audit the exact packaged paths and create a fingerprint for transfer records:
+
+```bash
+strands-handoff inspect support-123.strandpack --files
+strands-handoff inspect support-123.strandpack \
+  --files \
+  --sha256 \
+  --json > inventory.json
+```
+
+`--files` reports the verified manifest path, size, and SHA-256 for every
+payload file. `--sha256` hashes the exact `.strandpack` archive bytes, so the
+value can be compared before and after a copy or upload. Neither digest
+authenticates the creator or replaces a signature.
 
 Verify a batch before transfer or archival:
 
