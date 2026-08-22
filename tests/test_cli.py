@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -64,6 +65,42 @@ def test_cli_export_json_returns_machine_readable_summary(session_storage: Path,
             "namespace": "research",
         }
     ]
+
+
+def test_cli_inspect_optional_inventory_and_fingerprint(session_storage: Path, tmp_path: Path, capsys) -> None:
+    pack = tmp_path / "demo.strandpack"
+    assert (
+        main(
+            [
+                "export",
+                "--storage-dir",
+                str(session_storage),
+                "--session-id",
+                "demo",
+                "--output",
+                str(pack),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["inspect", str(pack), "--json"]) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert "files" not in default
+    assert "pack_sha256" not in default
+
+    assert main(["inspect", str(pack), "--files", "--sha256", "--json"]) == 0
+    details = json.loads(capsys.readouterr().out)
+    assert details["pack_sha256"] == hashlib.sha256(pack.read_bytes()).hexdigest()
+    assert [record["path"] for record in details["files"]] == sorted(record["path"] for record in details["files"])
+    assert all(set(record) == {"path", "size", "sha256"} for record in details["files"])
+    assert any(record["path"] == "session/session.json" for record in details["files"])
+
+    assert main(["inspect", str(pack), "--files", "--sha256"]) == 0
+    output = capsys.readouterr().out
+    assert f"Pack SHA-256: {details['pack_sha256']}" in output
+    assert "session/session.json" in output
 
 
 def test_cli_verify_returns_one_for_tampered_pack(session_storage: Path, tmp_path: Path, capsys) -> None:

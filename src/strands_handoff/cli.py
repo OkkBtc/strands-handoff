@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .core import branch_pack, diff_packs, export_session, inspect_pack, summary_markdown
+from .core import branch_pack, diff_packs, export_session, inspect_loaded, summary_markdown
 from .errors import HandoffError, PackIntegrityError, SessionFormatError
-from .pack import load_pack, prepare_extraction
+from .pack import load_pack, prepare_extraction, sha256_file
 
 
 def _artifact_spec(value: str) -> tuple[str, Path]:
@@ -56,6 +56,16 @@ def _parser() -> argparse.ArgumentParser:
     inspect = commands.add_parser("inspect", help="verify and preview pack metadata")
     inspect.add_argument("pack", type=Path)
     inspect.add_argument("--json", action="store_true")
+    inspect.add_argument(
+        "--files",
+        action="store_true",
+        help="include verified file paths, sizes, and SHA-256 digests",
+    )
+    inspect.add_argument(
+        "--sha256",
+        action="store_true",
+        help="include the SHA-256 fingerprint of the complete pack file",
+    )
 
     verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
     verify.add_argument("pack", type=Path, nargs="+", metavar="PACK", help="one or more pack files")
@@ -115,7 +125,22 @@ def _run_export(args: argparse.Namespace) -> int:
 
 
 def _run_inspect(args: argparse.Namespace) -> int:
-    details = inspect_pack(args.pack)
+    loaded = load_pack(args.pack)
+    details = inspect_loaded(loaded)
+    if args.files:
+        details["files"] = sorted(
+            (
+                {
+                    "path": record["path"],
+                    "size": record["size"],
+                    "sha256": record["sha256"],
+                }
+                for record in loaded.manifest["files"]
+            ),
+            key=lambda record: record["path"],
+        )
+    if args.sha256:
+        details["pack_sha256"] = sha256_file(args.pack)
     if args.json:
         _print_json(details)
     else:
@@ -126,6 +151,12 @@ def _run_inspect(args: argparse.Namespace) -> int:
         print(f"Artifacts: {details['artifacts']['files']} file(s)")
         if details["branch"]:
             print(f"Branch: {details['branch'].get('mode')}")
+        if args.sha256:
+            print(f"Pack SHA-256: {details['pack_sha256']}")
+        if args.files:
+            print(f"Pack files: {len(details['files'])}")
+            for record in details["files"]:
+                print(f"  {record['size']:>10} B  {record['path']}  sha256:{record['sha256']}")
     return 0
 
 
