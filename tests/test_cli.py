@@ -147,6 +147,48 @@ def test_cli_verify_multiple_packs_reports_every_result(session_storage: Path, t
     assert "Verified 1/2 pack(s); failed=1" in output
 
 
+def test_cli_verify_can_include_pack_fingerprints(session_storage: Path, tmp_path: Path, capsys) -> None:
+    first = tmp_path / "first.strandpack"
+    second = tmp_path / "second.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(first)]) == 0
+    second.write_bytes(first.read_bytes())
+    capsys.readouterr()
+
+    assert main(["verify", str(first), str(second), "--sha256", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    expected = hashlib.sha256(first.read_bytes()).hexdigest()
+    assert [pack["pack_sha256"] for pack in result["packs"]] == [expected, expected]
+
+    assert main(["verify", str(first), "--sha256"]) == 0
+    assert f"Pack SHA-256: {expected}" in capsys.readouterr().out
+
+
+def test_cli_diff_exit_code_detects_payload_changes(session_storage: Path, tmp_path: Path, capsys) -> None:
+    source = tmp_path / "source.strandpack"
+    branch = tmp_path / "branch.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(source)]) == 0
+    assert (
+        main(
+            [
+                "branch",
+                str(source),
+                "--new-session-id",
+                "demo-review",
+                "--output",
+                str(branch),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["diff", str(source), str(source), "--exit-code"]) == 0
+    capsys.readouterr()
+    assert main(["diff", str(source), str(branch), "--exit-code", "--json"]) == 1
+    difference = json.loads(capsys.readouterr().out)
+    assert "session/session.json" in difference["changed"]
+
+
 def test_cli_extract_dry_run_then_extract_json(session_storage: Path, tmp_path: Path, capsys) -> None:
     pack = tmp_path / "demo.strandpack"
     assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0

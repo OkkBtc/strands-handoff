@@ -15,12 +15,12 @@
 
 - **尽力脱敏导出：** 优先应用已经持久化的 Strands `redact_message`，再处理敏感键以及若干常见凭据、Token、邮箱和用户目录模式。
 - **完整性检查：** 在版本化清单中记录文件大小和 SHA-256，并在查看或提取前验证。
-- **批量校验：** 一条命令检查多个 pack，输出全部结果后再返回统一退出状态。
+- **批量校验：** 一条命令检查多个 pack，可同时生成每个完整归档的指纹，输出全部结果后再返回统一退出状态。
 - **只读检查：** 汇总 Agent、消息、角色、工具调用、脱敏计数和 Artifact，不修改源会话。
 - **已验证文件清单：** 完整性检查通过后，可列出每个打包路径、字节数和清单 SHA-256。
 - **传输指纹：** 可计算完整 `.strandpack` 文件的哈希，用于传输前后核对。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
-- **结构化差异：** 显示新增、删除、变化的文件，以及各 Agent 的消息数量变化。
+- **结构化差异：** 显示新增、删除、变化的文件以及各 Agent 的消息数量变化，并可用退出状态直接接入 CI。
 - **交接摘要：** 根据已验证的 pack 生成 Markdown 报告。
 - **Artifact 命名空间：** 按显式命名空间打包工具输出，并记录文件数和字节用量。
 - **适合自动化的输出：** 为导出、验证、检查、差异比较和提取提供 JSON 摘要。
@@ -101,11 +101,14 @@ strands-handoff inspect support-123.strandpack \
 ```bash
 strands-handoff verify support-123.strandpack support-124.strandpack
 strands-handoff verify support-123.strandpack support-124.strandpack \
+  --sha256 \
   --json > verification.json
 ```
 
 即使前面的 pack 失败，命令仍会检查所有输入；只要任意 pack 校验失败，最终退出状态
-就是 `1`。
+就是 `1`。`--sha256` 会为每个通过校验的归档增加 `pack_sha256` 指纹，使同一份批量
+结果既能记录完整性，也能用于传输前后核对。归档指纹可以发现字节变化，但不能认证
+创建者身份。
 
 生成 Markdown 交接报告：
 
@@ -136,7 +139,13 @@ strands-handoff branch support-123.strandpack \
 ```bash
 strands-handoff diff support-123.strandpack support-123-review.strandpack
 strands-handoff diff support-123.strandpack support-123-review.strandpack --json
+strands-handoff diff support-123.strandpack support-123-review.strandpack \
+  --exit-code
 ```
+
+默认情况下，只要比较成功，`diff` 即使发现变化也返回状态 `0`。使用 `--exit-code`
+后，相同载荷仍返回 `0`，只要有文件新增、删除或变化就返回 `1`，因此可以直接作为
+CI 门禁；pack 无效时仍返回状态 `2`。
 
 验证完整副本 pack，并在不写入任何内容的前提下预览准确目标：
 

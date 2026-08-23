@@ -15,12 +15,12 @@ Redaction is best-effort and the current implementation has not undergone an ind
 
 - **Best-effort redacted export:** honors persisted Strands `redact_message` replacements, then redacts sensitive keys and several common credential, token, email, and home-directory patterns.
 - **Integrity checks:** records file sizes and SHA-256 digests in a versioned manifest and verifies them before inspection or extraction.
-- **Batch verification:** checks multiple packs in one command and reports every result before returning a combined exit status.
+- **Batch verification:** checks multiple packs in one command, optionally fingerprints each complete archive, and reports every result before returning a combined exit status.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
 - **Verified file inventory:** optionally lists every packaged path, byte size, and manifest SHA-256 after integrity checks pass.
 - **Transfer fingerprint:** optionally hashes the complete `.strandpack` file for before/after transfer comparison.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
-- **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes.
+- **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes, with an optional CI-ready difference exit code.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
 - **Namespaced artifacts:** packages tool outputs under explicit namespaces with file-count and byte-usage metadata.
 - **Automation-friendly output:** emits JSON summaries for export, verification, inspection, diff, and extraction workflows.
@@ -102,11 +102,15 @@ Verify a batch before transfer or archival:
 ```bash
 strands-handoff verify support-123.strandpack support-124.strandpack
 strands-handoff verify support-123.strandpack support-124.strandpack \
+  --sha256 \
   --json > verification.json
 ```
 
 Every supplied pack is checked even when an earlier one fails. The command exits
-with status `1` if any pack fails verification.
+with status `1` if any pack fails verification. `--sha256` adds a
+`pack_sha256` fingerprint for each verified archive, allowing one batch result
+to serve as both an integrity record and a before/after transfer checklist. A
+pack fingerprint detects byte changes but does not authenticate its creator.
 
 Generate a Markdown handoff report:
 
@@ -137,7 +141,14 @@ Compare two packs without replaying a model:
 ```bash
 strands-handoff diff support-123.strandpack support-123-review.strandpack
 strands-handoff diff support-123.strandpack support-123-review.strandpack --json
+strands-handoff diff support-123.strandpack support-123-review.strandpack \
+  --exit-code
 ```
+
+By default, `diff` returns status `0` after a successful comparison even when it
+reports changes. `--exit-code` keeps status `0` for equal payloads and returns
+status `1` when files were added, removed, or changed, which makes the command
+usable as a CI gate. Invalid packs still return status `2`.
 
 Validate a full-copy pack and preview its exact extraction target without writing:
 
