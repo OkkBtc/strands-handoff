@@ -70,6 +70,11 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
     verify.add_argument("pack", type=Path, nargs="+", metavar="PACK", help="one or more pack files")
     verify.add_argument("--json", action="store_true", help="emit machine-readable verification results")
+    verify.add_argument(
+        "--sha256",
+        action="store_true",
+        help="include the SHA-256 fingerprint of each complete pack file",
+    )
 
     branch = commands.add_parser("branch", help="create an isolated pack branch")
     branch.add_argument("pack", type=Path)
@@ -82,6 +87,11 @@ def _parser() -> argparse.ArgumentParser:
     diff.add_argument("left", type=Path)
     diff.add_argument("right", type=Path)
     diff.add_argument("--json", action="store_true")
+    diff.add_argument(
+        "--exit-code",
+        action="store_true",
+        help="return status 1 when the verified pack payloads differ",
+    )
 
     summary = commands.add_parser("summary", help="generate a Markdown handoff report")
     summary.add_argument("pack", type=Path)
@@ -160,7 +170,7 @@ def _run_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _verify_pack(pack: Path) -> dict[str, Any]:
+def _verify_pack(pack: Path, *, include_sha256: bool = False) -> dict[str, Any]:
     try:
         loaded = load_pack(pack)
     except PackIntegrityError as error:
@@ -169,15 +179,18 @@ def _verify_pack(pack: Path) -> dict[str, Any]:
             "integrity": "failed",
             "error": str(error),
         }
-    return {
+    result = {
         "pack": str(pack.expanduser().resolve()),
         "integrity": "ok",
         "files": len(loaded.files),
     }
+    if include_sha256:
+        result["pack_sha256"] = sha256_file(pack)
+    return result
 
 
 def _run_verify(args: argparse.Namespace) -> int:
-    results = [_verify_pack(pack) for pack in args.pack]
+    results = [_verify_pack(pack, include_sha256=args.sha256) for pack in args.pack]
     failed = sum(result["integrity"] == "failed" for result in results)
     if len(results) == 1:
         result = {key: value for key, value in results[0].items() if key != "pack"}
@@ -187,6 +200,8 @@ def _run_verify(args: argparse.Namespace) -> int:
             print(f"OK: {result['files']} file(s) verified")
         else:
             print(f"FAILED: {result['error']}")
+        if "pack_sha256" in result:
+            print(f"Pack SHA-256: {result['pack_sha256']}")
         return int(failed > 0)
 
     summary = {"total": len(results), "passed": len(results) - failed, "failed": failed}
@@ -196,6 +211,8 @@ def _run_verify(args: argparse.Namespace) -> int:
         for result in results:
             if result["integrity"] == "ok":
                 print(f"OK {result['pack']}: {result['files']} file(s) verified")
+                if "pack_sha256" in result:
+                    print(f"  Pack SHA-256: {result['pack_sha256']}")
             else:
                 print(f"FAILED {result['pack']}: {result['error']}")
         print(f"Verified {summary['passed']}/{summary['total']} pack(s); failed={failed}")
@@ -225,7 +242,8 @@ def _run_diff(args: argparse.Namespace) -> int:
         )
         for agent_id, delta in details["message_delta"].items():
             print(f"Message delta [{agent_id}]: {delta:+d}")
-    return 0
+    differs = any(details[key] for key in ("added", "removed", "changed"))
+    return int(args.exit_code and differs)
 
 
 def _run_summary(args: argparse.Namespace) -> int:
