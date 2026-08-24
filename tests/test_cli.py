@@ -5,6 +5,8 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from strands_handoff.cli import main
 
 
@@ -161,6 +163,49 @@ def test_cli_verify_can_include_pack_fingerprints(session_storage: Path, tmp_pat
 
     assert main(["verify", str(first), "--sha256"]) == 0
     assert f"Pack SHA-256: {expected}" in capsys.readouterr().out
+
+    assert main(["verify", str(first), "--sha256", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["pack_sha256"] == expected
+
+
+def test_cli_verify_can_require_expected_fingerprint(session_storage: Path, tmp_path: Path, capsys) -> None:
+    pack = tmp_path / "received.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0
+    capsys.readouterr()
+    expected = hashlib.sha256(pack.read_bytes()).hexdigest()
+
+    assert main(["verify", str(pack), "--expect-sha256", expected.upper(), "--json"]) == 0
+    matched = json.loads(capsys.readouterr().out)
+    assert matched["pack_sha256"] == expected
+    assert matched["expected_sha256"] == expected
+    assert matched["fingerprint_match"] is True
+
+    wrong = ("0" if expected[0] != "0" else "1") + expected[1:]
+    assert main(["verify", str(pack), "--expect-sha256", wrong, "--json"]) == 1
+    mismatched = json.loads(capsys.readouterr().out)
+    assert mismatched["integrity"] == "ok"
+    assert mismatched["fingerprint_match"] is False
+
+
+def test_cli_expected_fingerprint_validates_input_and_pack_count(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit):
+        main(["verify", str(tmp_path / "pack.strandpack"), "--expect-sha256", "not-a-digest"])
+    assert "64-character hexadecimal" in capsys.readouterr().err
+
+    digest = "0" * 64
+    assert (
+        main(
+            [
+                "verify",
+                str(tmp_path / "first.strandpack"),
+                str(tmp_path / "second.strandpack"),
+                "--expect-sha256",
+                digest,
+            ]
+        )
+        == 2
+    )
+    assert "requires exactly one pack" in capsys.readouterr().err
 
 
 def test_cli_diff_exit_code_detects_payload_changes(session_storage: Path, tmp_path: Path, capsys) -> None:

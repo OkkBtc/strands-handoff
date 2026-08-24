@@ -24,6 +24,12 @@ def _artifact_spec(value: str) -> tuple[str, Path]:
     return namespace, Path(path)
 
 
+def _sha256_digest(value: str) -> str:
+    if len(value) != 64 or any(character not in "0123456789abcdefABCDEF" for character in value):
+        raise argparse.ArgumentTypeError("expected a 64-character hexadecimal SHA-256 digest")
+    return value.lower()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="strands-handoff",
@@ -74,6 +80,12 @@ def _parser() -> argparse.ArgumentParser:
         "--sha256",
         action="store_true",
         help="include the SHA-256 fingerprint of each complete pack file",
+    )
+    verify.add_argument(
+        "--expect-sha256",
+        type=_sha256_digest,
+        metavar="HEX",
+        help="require one pack to match this complete-file SHA-256 fingerprint",
     )
 
     branch = commands.add_parser("branch", help="create an isolated pack branch")
@@ -190,18 +202,36 @@ def _verify_pack(pack: Path, *, include_sha256: bool = False) -> dict[str, Any]:
 
 
 def _run_verify(args: argparse.Namespace) -> int:
-    results = [_verify_pack(pack, include_sha256=args.sha256) for pack in args.pack]
-    failed = sum(result["integrity"] == "failed" for result in results)
+    if args.expect_sha256 is not None and len(args.pack) != 1:
+        raise SessionFormatError("--expect-sha256 requires exactly one pack")
+    include_sha256 = args.sha256 or args.expect_sha256 is not None
+    results = [_verify_pack(pack, include_sha256=include_sha256) for pack in args.pack]
+    if args.expect_sha256 is not None:
+        result = results[0]
+        result["expected_sha256"] = args.expect_sha256
+        if result["integrity"] == "ok":
+            result["fingerprint_match"] = result["pack_sha256"] == args.expect_sha256
+    failed = sum(result["integrity"] == "failed" or result.get("fingerprint_match") is False for result in results)
     if len(results) == 1:
         result = {key: value for key, value in results[0].items() if key != "pack"}
         if args.json:
             _print_json(result)
-        elif result["integrity"] == "ok":
-            print(f"OK: {result['files']} file(s) verified")
         else:
-            print(f"FAILED: {result['error']}")
-        if "pack_sha256" in result:
-            print(f"Pack SHA-256: {result['pack_sha256']}")
+            if result["integrity"] == "failed":
+                print(f"FAILED: {result['error']}")
+            elif result.get("fingerprint_match") is False:
+                print("FAILED: pack SHA-256 does not match expected fingerprint")
+            else:
+                print(f"OK: {result['files']} file(s) verified")
+            if "pack_sha256" in result:
+                print(f"Pack SHA-256: {result['pack_sha256']}")
+            if "expected_sha256" in result:
+                print(f"Expected SHA-256: {result['expected_sha256']}")
+                if "fingerprint_match" not in result:
+                    verdict = "NOT CHECKED"
+                else:
+                    verdict = "MATCH" if result["fingerprint_match"] else "MISMATCH"
+                print(f"Fingerprint: {verdict}")
         return int(failed > 0)
 
     summary = {"total": len(results), "passed": len(results) - failed, "failed": failed}
