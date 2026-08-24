@@ -18,7 +18,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Batch verification:** checks multiple packs in one command, optionally fingerprints each complete archive, and reports every result before returning a combined exit status.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
 - **Verified file inventory:** optionally lists every packaged path, byte size, and manifest SHA-256 after integrity checks pass.
-- **Transfer fingerprint:** optionally hashes the complete `.strandpack` file for before/after transfer comparison.
+- **Transfer fingerprint:** hashes the complete `.strandpack` file and can require a received pack to match an expected SHA-256.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes, with an optional CI-ready difference exit code.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
@@ -96,6 +96,19 @@ strands-handoff inspect support-123.strandpack \
 payload file. `--sha256` hashes the exact `.strandpack` archive bytes, so the
 value can be compared before and after a copy or upload. Neither digest
 authenticates the creator or replaces a signature.
+
+After receiving a pack, verify its internal manifest and the sender-provided
+complete-file fingerprint together:
+
+```bash
+strands-handoff verify received.strandpack \
+  --expect-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+`--expect-sha256` accepts one pack and a 64-character hexadecimal digest. It
+prints both fingerprints and returns status `1` when the verified pack bytes do
+not match; JSON output includes `fingerprint_match`. The expected digest must be
+shared through a trusted channel if it is intended to provide authenticity.
 
 Verify a batch before transfer or archival:
 
