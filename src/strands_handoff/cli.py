@@ -72,6 +72,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include the SHA-256 fingerprint of the complete pack file",
     )
+    inspect.add_argument(
+        "--manifest",
+        action="store_true",
+        help="include the complete verified manifest",
+    )
 
     verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
     verify.add_argument("pack", type=Path, nargs="+", metavar="PACK", help="one or more pack files")
@@ -163,6 +168,8 @@ def _run_inspect(args: argparse.Namespace) -> int:
         )
     if args.sha256:
         details["pack_sha256"] = sha256_file(args.pack)
+    if args.manifest:
+        details["manifest"] = loaded.manifest
     if args.json:
         _print_json(details)
     else:
@@ -179,6 +186,9 @@ def _run_inspect(args: argparse.Namespace) -> int:
             print(f"Pack files: {len(details['files'])}")
             for record in details["files"]:
                 print(f"  {record['size']:>10} B  {record['path']}  sha256:{record['sha256']}")
+        if args.manifest:
+            print("Manifest:")
+            print(json.dumps(details["manifest"], indent=2, ensure_ascii=False, sort_keys=True))
     return 0
 
 

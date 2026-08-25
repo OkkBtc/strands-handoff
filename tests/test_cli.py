@@ -91,18 +91,24 @@ def test_cli_inspect_optional_inventory_and_fingerprint(session_storage: Path, t
     default = json.loads(capsys.readouterr().out)
     assert "files" not in default
     assert "pack_sha256" not in default
+    assert "manifest" not in default
 
-    assert main(["inspect", str(pack), "--files", "--sha256", "--json"]) == 0
+    assert main(["inspect", str(pack), "--files", "--sha256", "--manifest", "--json"]) == 0
     details = json.loads(capsys.readouterr().out)
     assert details["pack_sha256"] == hashlib.sha256(pack.read_bytes()).hexdigest()
     assert [record["path"] for record in details["files"]] == sorted(record["path"] for record in details["files"])
     assert all(set(record) == {"path", "size", "sha256"} for record in details["files"])
     assert any(record["path"] == "session/session.json" for record in details["files"])
+    assert details["manifest"]["format"] == "strandpack"
+    assert details["manifest"]["source"]["session_id"] == "demo"
+    assert details["manifest"]["files"] == details["files"]
 
-    assert main(["inspect", str(pack), "--files", "--sha256"]) == 0
+    assert main(["inspect", str(pack), "--files", "--sha256", "--manifest"]) == 0
     output = capsys.readouterr().out
     assert f"Pack SHA-256: {details['pack_sha256']}" in output
     assert "session/session.json" in output
+    assert "Manifest:" in output
+    assert '"format": "strandpack"' in output
 
 
 def test_cli_verify_returns_one_for_tampered_pack(session_storage: Path, tmp_path: Path, capsys) -> None:
