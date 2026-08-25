@@ -18,6 +18,7 @@
 - **批量校验：** 一条命令检查多个 pack，可同时生成每个完整归档的指纹，输出全部结果后再返回统一退出状态。
 - **只读检查：** 汇总 Agent、消息、角色、工具调用、脱敏计数和 Artifact，不修改源会话。
 - **已验证文件清单：** 完整性检查通过后，可列出每个打包路径、字节数和清单 SHA-256。
+- **已验证 Manifest 审计：** 无需手动打开 ZIP，即可查看完整且已校验的 Manifest。
 - **传输指纹：** 可计算完整 `.strandpack` 文件的哈希，并要求接收的 pack 匹配预期 SHA-256。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
 - **结构化差异：** 显示新增、删除、变化的文件以及各 Agent 的消息数量变化，并可用退出状态直接接入 CI。
@@ -89,12 +90,18 @@ strands-handoff inspect support-123.strandpack --files
 strands-handoff inspect support-123.strandpack \
   --files \
   --sha256 \
+  --manifest \
   --json > inventory.json
 ```
 
 `--files` 会输出每个载荷文件在已验证清单中的路径、大小和 SHA-256；`--sha256`
 会计算 `.strandpack` 归档准确字节的哈希，可在复制或上传前后进行比较。这两类摘要都
 不能认证创建者，也不能替代数字签名。
+
+`--manifest` 会加入完整且已验证的 Manifest，包括来源兼容信息、脱敏统计、Artifact
+元数据、分支元数据和文件记录。搭配 `--json` 时内容位于 `manifest` 字段，文本输出
+则追加独立的 JSON 区块。Manifest 仍包含元数据和路径，虽然不包含 pack 文件内容，
+分享到外部前也应人工检查。
 
 收到 pack 后，可以同时验证内部清单和发送方提供的完整文件指纹：
 

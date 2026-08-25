@@ -18,6 +18,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Batch verification:** checks multiple packs in one command, optionally fingerprints each complete archive, and reports every result before returning a combined exit status.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
 - **Verified file inventory:** optionally lists every packaged path, byte size, and manifest SHA-256 after integrity checks pass.
+- **Verified manifest audit:** exposes the complete validated manifest without manually opening the ZIP archive.
 - **Transfer fingerprint:** hashes the complete `.strandpack` file and can require a received pack to match an expected SHA-256.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes, with an optional CI-ready difference exit code.
@@ -89,6 +90,7 @@ strands-handoff inspect support-123.strandpack --files
 strands-handoff inspect support-123.strandpack \
   --files \
   --sha256 \
+  --manifest \
   --json > inventory.json
 ```
 
@@ -96,6 +98,12 @@ strands-handoff inspect support-123.strandpack \
 payload file. `--sha256` hashes the exact `.strandpack` archive bytes, so the
 value can be compared before and after a copy or upload. Neither digest
 authenticates the creator or replaces a signature.
+
+`--manifest` adds the complete verified manifest, including source compatibility,
+redaction totals, Artifact metadata, branch metadata, and file records. With
+`--json` it is available under the `manifest` key; text output prints a separate
+JSON block. The manifest contains metadata and paths, so review it before
+sharing even though pack contents are not included.
 
 After receiving a pack, verify its internal manifest and the sender-provided
 complete-file fingerprint together:
