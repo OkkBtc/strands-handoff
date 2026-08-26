@@ -16,6 +16,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Best-effort redacted export:** honors persisted Strands `redact_message` replacements, then redacts sensitive keys and several common credential, token, email, and home-directory patterns.
 - **Integrity checks:** records file sizes and SHA-256 digests in a versioned manifest and verifies them before inspection or extraction.
 - **Batch verification:** checks multiple packs in one command, optionally fingerprints each complete archive, and reports every result before returning a combined exit status.
+- **Quiet CI verification:** suppresses successful verification output while retaining failure diagnostics and exit status.
 - **Read-only inspection:** summarizes agents, messages, roles, tool calls, redaction counts, and packaged artifacts without modifying the source session.
 - **Verified file inventory:** optionally lists every packaged path, byte size, and manifest SHA-256 after integrity checks pass.
 - **Verified manifest audit:** exposes the complete validated manifest without manually opening the ZIP archive.
@@ -132,6 +133,17 @@ with status `1` if any pack fails verification. `--sha256` adds a
 `pack_sha256` fingerprint for each verified archive, allowing one batch result
 to serve as both an integrity record and a before/after transfer checklist. A
 pack fingerprint detects byte changes but does not authenticate its creator.
+
+For CI steps that only need the exit status, suppress successful pack output:
+
+```bash
+strands-handoff verify support-123.strandpack support-124.strandpack --quiet
+```
+
+`--quiet` prints nothing when every pack passes. If verification fails, it still
+prints the failed pack diagnostics and returns status `1`, while successful
+entries stay hidden. It cannot be combined with `--json`, and it does not stop
+the command from checking every supplied pack.
 
 Generate a Markdown handoff report:
 

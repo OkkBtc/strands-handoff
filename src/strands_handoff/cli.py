@@ -80,7 +80,13 @@ def _parser() -> argparse.ArgumentParser:
 
     verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
     verify.add_argument("pack", type=Path, nargs="+", metavar="PACK", help="one or more pack files")
-    verify.add_argument("--json", action="store_true", help="emit machine-readable verification results")
+    verify_output = verify.add_mutually_exclusive_group()
+    verify_output.add_argument("--json", action="store_true", help="emit machine-readable verification results")
+    verify_output.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress successful results while retaining failure diagnostics",
+    )
     verify.add_argument(
         "--sha256",
         action="store_true",
@@ -227,6 +233,8 @@ def _run_verify(args: argparse.Namespace) -> int:
         if args.json:
             _print_json(result)
         else:
+            if args.quiet and not failed:
+                return 0
             if result["integrity"] == "failed":
                 print(f"FAILED: {result['error']}")
             elif result.get("fingerprint_match") is False:
@@ -249,13 +257,16 @@ def _run_verify(args: argparse.Namespace) -> int:
         _print_json({"summary": summary, "packs": results})
     else:
         for result in results:
+            if args.quiet and result["integrity"] == "ok":
+                continue
             if result["integrity"] == "ok":
                 print(f"OK {result['pack']}: {result['files']} file(s) verified")
                 if "pack_sha256" in result:
                     print(f"  Pack SHA-256: {result['pack_sha256']}")
             else:
                 print(f"FAILED {result['pack']}: {result['error']}")
-        print(f"Verified {summary['passed']}/{summary['total']} pack(s); failed={failed}")
+        if not args.quiet:
+            print(f"Verified {summary['passed']}/{summary['total']} pack(s); failed={failed}")
     return int(failed > 0)
 
 
