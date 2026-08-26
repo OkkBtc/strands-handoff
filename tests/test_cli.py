@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import zipfile
@@ -200,6 +201,135 @@ def test_cli_verify_can_require_expected_fingerprint(session_storage: Path, tmp_
     mismatched = json.loads(capsys.readouterr().out)
     assert mismatched["integrity"] == "ok"
     assert mismatched["fingerprint_match"] is False
+
+
+def test_cli_hmac_authentication_roundtrip(session_storage: Path, tmp_path: Path, monkeypatch, capsys) -> None:
+    pack = tmp_path / "received.strandpack"
+    record_path = tmp_path / "received.auth.json"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0
+    capsys.readouterr()
+    encoded_key = base64.b64encode(b"k" * 32).decode()
+    monkeypatch.setenv("STRANDPACK_HMAC_KEY", encoded_key)
+
+    assert (
+        main(
+            [
+                "authenticate",
+                str(pack),
+                "--key-env",
+                "STRANDPACK_HMAC_KEY",
+                "--output",
+                str(record_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert encoded_key not in output
+    assert result["auth_record"] == str(record_path.resolve())
+    assert record["format"] == "strandpack-authentication"
+    assert record["algorithm"] == "hmac-sha256"
+    assert record["pack_sha256"] == hashlib.sha256(pack.read_bytes()).hexdigest()
+    assert len(record["hmac_sha256"]) == 64
+    assert record_path.stat().st_mode & 0o777 == 0o600
+
+    command = [
+        "verify",
+        str(pack),
+        "--auth-record",
+        str(record_path),
+        "--key-env",
+        "STRANDPACK_HMAC_KEY",
+        "--json",
+    ]
+    assert main(command) == 0
+    verified_output = capsys.readouterr().out
+    verified = json.loads(verified_output)
+    assert encoded_key not in verified_output
+    assert verified["authentication"] == "ok"
+    assert verified["authenticated_pack_sha256"] == record["pack_sha256"]
+
+    monkeypatch.setenv("STRANDPACK_HMAC_KEY", base64.b64encode(b"x" * 32).decode())
+    assert main(command) == 1
+    assert json.loads(capsys.readouterr().out)["authentication"] == "failed"
+
+
+def test_cli_hmac_authentication_validates_keys_and_integrity(
+    session_storage: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    pack = tmp_path / "source.strandpack"
+    record_path = tmp_path / "source.auth.json"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0
+    capsys.readouterr()
+
+    command = [
+        "authenticate",
+        str(pack),
+        "--key-env",
+        "STRANDPACK_HMAC_KEY",
+        "--output",
+        str(record_path),
+    ]
+    assert main(command) == 2
+    assert "not set or empty" in capsys.readouterr().err
+
+    monkeypatch.setenv("STRANDPACK_HMAC_KEY", base64.b64encode(b"short").decode())
+    assert main(command) == 2
+    assert "at least 32 bytes" in capsys.readouterr().err
+
+    monkeypatch.setenv("STRANDPACK_HMAC_KEY", base64.b64encode(b"k" * 32).decode())
+    assert main(command) == 0
+    capsys.readouterr()
+    assert main(command) == 2
+    assert "output already exists" in capsys.readouterr().err
+
+    assert main(["verify", str(pack), "--auth-record", str(record_path)]) == 2
+    assert "must be used together" in capsys.readouterr().err
+    assert (
+        main(
+            [
+                "verify",
+                str(pack),
+                str(pack),
+                "--auth-record",
+                str(record_path),
+                "--key-env",
+                "STRANDPACK_HMAC_KEY",
+            ]
+        )
+        == 2
+    )
+    assert "requires exactly one pack" in capsys.readouterr().err
+
+    tampered = tmp_path / "tampered.strandpack"
+    with zipfile.ZipFile(pack) as source, zipfile.ZipFile(tampered, "w") as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "session/session.json":
+                value = json.loads(data)
+                value["session_id"] = "changed"
+                data = json.dumps(value).encode()
+            target.writestr(info, data)
+    assert (
+        main(
+            [
+                "verify",
+                str(tampered),
+                "--auth-record",
+                str(record_path),
+                "--key-env",
+                "STRANDPACK_HMAC_KEY",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    failed = json.loads(capsys.readouterr().out)
+    assert failed["integrity"] == "failed"
+    assert failed["authentication"] == "not_checked"
 
 
 def test_cli_expected_fingerprint_validates_input_and_pack_count(tmp_path: Path, capsys) -> None:
