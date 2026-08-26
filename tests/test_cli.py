@@ -154,6 +154,12 @@ def test_cli_verify_multiple_packs_reports_every_result(session_storage: Path, t
     assert f"FAILED {bad.resolve()}" in output
     assert "Verified 1/2 pack(s); failed=1" in output
 
+    assert main(["verify", str(good), str(bad), "--quiet"]) == 1
+    quiet_output = capsys.readouterr().out
+    assert str(good.resolve()) not in quiet_output
+    assert f"FAILED {bad.resolve()}" in quiet_output
+    assert "Verified" not in quiet_output
+
 
 def test_cli_verify_can_include_pack_fingerprints(session_storage: Path, tmp_path: Path, capsys) -> None:
     first = tmp_path / "first.strandpack"
@@ -172,6 +178,9 @@ def test_cli_verify_can_include_pack_fingerprints(session_storage: Path, tmp_pat
 
     assert main(["verify", str(first), "--sha256", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["pack_sha256"] == expected
+
+    assert main(["verify", str(first), "--quiet"]) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_cli_verify_can_require_expected_fingerprint(session_storage: Path, tmp_path: Path, capsys) -> None:
@@ -212,6 +221,10 @@ def test_cli_expected_fingerprint_validates_input_and_pack_count(tmp_path: Path,
         == 2
     )
     assert "requires exactly one pack" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        main(["verify", str(tmp_path / "pack.strandpack"), "--quiet", "--json"])
+    assert "not allowed with argument" in capsys.readouterr().err
 
 
 def test_cli_diff_exit_code_detects_payload_changes(session_storage: Path, tmp_path: Path, capsys) -> None:
