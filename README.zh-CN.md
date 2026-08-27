@@ -21,6 +21,7 @@
 - **已验证文件清单：** 完整性检查通过后，可列出每个打包路径、字节数和清单 SHA-256。
 - **已验证 Manifest 审计：** 无需手动打开 ZIP，即可查看完整且已校验的 Manifest。
 - **传输指纹：** 可计算完整 `.strandpack` 文件的哈希，并要求接收的 pack 匹配预期 SHA-256。
+- **认证传输记录：** 使用保存在环境变量中的共享密钥创建并校验独立 HMAC-SHA256 记录。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
 - **结构化差异：** 显示新增、删除、变化的文件以及各 Agent 的消息数量变化，并可用退出状态直接接入 CI。
 - **交接摘要：** 根据已验证的 pack 生成 Markdown 报告。
@@ -114,6 +115,25 @@ strands-handoff verify received.strandpack \
 `--expect-sha256` 接受一个 pack 和 64 位十六进制摘要。通过完整性校验的 pack 如果
 字节指纹不一致，会同时输出两个指纹并返回状态 `1`；JSON 中会提供
 `fingerprint_match`。如果希望指纹具备身份确认意义，预期摘要必须通过可信渠道传递。
+
+发送方和接收方通过密码管理器共享随机密钥后，可以为 pack 的准确字节创建独立认证
+记录：
+
+```bash
+strands-handoff authenticate support-123.strandpack \
+  --key-env STRANDPACK_HMAC_KEY \
+  --output support-123.strandpack.auth.json
+
+strands-handoff verify received.strandpack \
+  --auth-record support-123.strandpack.auth.json \
+  --key-env STRANDPACK_HMAC_KEY
+```
+
+环境变量必须是 Base64，解码后至少包含 32 个随机字节；密钥本身不会写入记录或命令
+输出。`authenticate` 会先验证 pack、拒绝覆盖已有记录，并使用仅所有者可读写的权限
+创建文件；`verify` 会先检查 pack 完整性，再进行恒定时间 HMAC 比对。记录包含 pack
+SHA-256 和 HMAC-SHA256 标签，因此既能验证对方持有共享密钥，也能发现字节变化。
+HMAC 属于对称认证，不提供公钥发送方身份、密钥分发、密钥轮换或防重放能力。
 
 在传递或归档前批量校验：
 
@@ -253,6 +273,7 @@ python -m build
 ## 安全
 
 不要在公开 Issue 中附带真实 session pack、Token 或客户数据。私密报告方式和安全边界见 [SECURITY.md](SECURITY.md)。
+HMAC 密钥应保存在密码管理器中，与 pack 和认证记录分开传递，并按自己的访问策略轮换。
 
 ## 许可证与上游
 

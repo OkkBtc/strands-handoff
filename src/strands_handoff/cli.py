@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hmac
 import json
+import os
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -12,7 +17,11 @@ from typing import Any
 from . import __version__
 from .core import branch_pack, diff_packs, export_session, inspect_loaded, summary_markdown
 from .errors import HandoffError, PackIntegrityError, SessionFormatError
-from .pack import load_pack, prepare_extraction, sha256_file
+from .pack import hmac_sha256_file, load_pack, prepare_extraction, sha256_file
+
+_AUTH_FORMAT = "strandpack-authentication"
+_AUTH_VERSION = 1
+_MAX_AUTH_RECORD_BYTES = 16 * 1024
 
 
 def _artifact_spec(value: str) -> tuple[str, Path]:
@@ -28,6 +37,56 @@ def _sha256_digest(value: str) -> str:
     if len(value) != 64 or any(character not in "0123456789abcdefABCDEF" for character in value):
         raise argparse.ArgumentTypeError("expected a 64-character hexadecimal SHA-256 digest")
     return value.lower()
+
+
+def _environment_name(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
+        raise argparse.ArgumentTypeError("expected an environment variable name")
+    return value
+
+
+def _hmac_key_from_env(name: str) -> bytes:
+    encoded = os.environ.get(name)
+    if not encoded:
+        raise SessionFormatError(f"environment variable {name} is not set or empty")
+    try:
+        key = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise SessionFormatError(f"environment variable {name} is not valid base64") from error
+    if len(key) < 32:
+        raise SessionFormatError(f"environment variable {name} must decode to at least 32 bytes")
+    return key
+
+
+def _load_authentication_record(path: Path) -> tuple[Path, dict[str, Any]]:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise PackIntegrityError(f"authentication record does not exist: {resolved}")
+    if resolved.stat().st_size > _MAX_AUTH_RECORD_BYTES:
+        raise PackIntegrityError("authentication record exceeds 16 KiB limit")
+    try:
+        record = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise PackIntegrityError(f"invalid authentication record: {error}") from error
+    if not isinstance(record, dict):
+        raise PackIntegrityError("authentication record must be a JSON object")
+    if (
+        record.get("format") != _AUTH_FORMAT
+        or record.get("format_version") != _AUTH_VERSION
+        or record.get("algorithm") != "hmac-sha256"
+    ):
+        raise PackIntegrityError("unsupported authentication record format or algorithm")
+    record = dict(record)
+    for field in ("pack_sha256", "hmac_sha256"):
+        value = record.get(field)
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in value)
+        ):
+            raise PackIntegrityError(f"authentication record has an invalid {field}")
+        record[field] = value.lower()
+    return resolved, record
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -78,6 +137,15 @@ def _parser() -> argparse.ArgumentParser:
         help="include the complete verified manifest",
     )
 
+    authenticate = commands.add_parser(
+        "authenticate",
+        help="create a detached HMAC-SHA256 authentication record",
+    )
+    authenticate.add_argument("pack", type=Path)
+    authenticate.add_argument("--key-env", type=_environment_name, required=True)
+    authenticate.add_argument("--output", type=Path, required=True)
+    authenticate.add_argument("--json", action="store_true")
+
     verify = commands.add_parser("verify", help="verify manifest and SHA-256 checksums")
     verify.add_argument("pack", type=Path, nargs="+", metavar="PACK", help="one or more pack files")
     verify_output = verify.add_mutually_exclusive_group()
@@ -97,6 +165,16 @@ def _parser() -> argparse.ArgumentParser:
         type=_sha256_digest,
         metavar="HEX",
         help="require one pack to match this complete-file SHA-256 fingerprint",
+    )
+    verify.add_argument(
+        "--auth-record",
+        type=Path,
+        help="verify one pack against a detached HMAC authentication record",
+    )
+    verify.add_argument(
+        "--key-env",
+        type=_environment_name,
+        help="read the base64-encoded HMAC key from this environment variable",
     )
 
     branch = commands.add_parser("branch", help="create an isolated pack branch")
@@ -198,6 +276,47 @@ def _run_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_authenticate(args: argparse.Namespace) -> int:
+    pack = args.pack.expanduser().resolve()
+    output = args.output.expanduser().resolve()
+    if output.exists():
+        raise PackIntegrityError(f"output already exists: {output}")
+    load_pack(pack)
+    key = _hmac_key_from_env(args.key_env)
+    pack_sha256 = sha256_file(pack)
+    record = {
+        "format": _AUTH_FORMAT,
+        "format_version": _AUTH_VERSION,
+        "algorithm": "hmac-sha256",
+        "pack_sha256": pack_sha256,
+        "hmac_sha256": hmac_sha256_file(pack, key),
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise PackIntegrityError(f"output already exists: {output}") from error
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except BaseException:
+        output.unlink(missing_ok=True)
+        raise
+
+    result = {
+        "pack": str(pack),
+        "auth_record": str(output),
+        "algorithm": record["algorithm"],
+        "pack_sha256": pack_sha256,
+    }
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Created {output} for {pack}")
+    return 0
+
+
 def _verify_pack(pack: Path, *, include_sha256: bool = False) -> dict[str, Any]:
     try:
         loaded = load_pack(pack)
@@ -220,14 +339,44 @@ def _verify_pack(pack: Path, *, include_sha256: bool = False) -> dict[str, Any]:
 def _run_verify(args: argparse.Namespace) -> int:
     if args.expect_sha256 is not None and len(args.pack) != 1:
         raise SessionFormatError("--expect-sha256 requires exactly one pack")
-    include_sha256 = args.sha256 or args.expect_sha256 is not None
+    if (args.auth_record is None) != (args.key_env is None):
+        raise SessionFormatError("--auth-record and --key-env must be used together")
+    if args.auth_record is not None and len(args.pack) != 1:
+        raise SessionFormatError("--auth-record requires exactly one pack")
+
+    authentication = None
+    authentication_path = None
+    authentication_key = None
+    if args.auth_record is not None:
+        authentication_path, authentication = _load_authentication_record(args.auth_record)
+        authentication_key = _hmac_key_from_env(args.key_env)
+
+    include_sha256 = args.sha256 or args.expect_sha256 is not None or authentication is not None
     results = [_verify_pack(pack, include_sha256=include_sha256) for pack in args.pack]
     if args.expect_sha256 is not None:
         result = results[0]
         result["expected_sha256"] = args.expect_sha256
         if result["integrity"] == "ok":
             result["fingerprint_match"] = result["pack_sha256"] == args.expect_sha256
-    failed = sum(result["integrity"] == "failed" or result.get("fingerprint_match") is False for result in results)
+    if authentication is not None:
+        result = results[0]
+        result["auth_record"] = str(authentication_path)
+        result["authenticated_pack_sha256"] = authentication["pack_sha256"]
+        if result["integrity"] == "ok":
+            assert authentication_key is not None
+            actual_tag = hmac_sha256_file(args.pack[0], authentication_key)
+            matches = result["pack_sha256"] == authentication["pack_sha256"] and hmac.compare_digest(
+                actual_tag, authentication["hmac_sha256"]
+            )
+            result["authentication"] = "ok" if matches else "failed"
+        else:
+            result["authentication"] = "not_checked"
+    failed = sum(
+        result["integrity"] == "failed"
+        or result.get("fingerprint_match") is False
+        or result.get("authentication") == "failed"
+        for result in results
+    )
     if len(results) == 1:
         result = {key: value for key, value in results[0].items() if key != "pack"}
         if args.json:
@@ -239,6 +388,8 @@ def _run_verify(args: argparse.Namespace) -> int:
                 print(f"FAILED: {result['error']}")
             elif result.get("fingerprint_match") is False:
                 print("FAILED: pack SHA-256 does not match expected fingerprint")
+            elif result.get("authentication") == "failed":
+                print("FAILED: HMAC authentication record does not match pack bytes")
             else:
                 print(f"OK: {result['files']} file(s) verified")
             if "pack_sha256" in result:
@@ -250,6 +401,9 @@ def _run_verify(args: argparse.Namespace) -> int:
                 else:
                     verdict = "MATCH" if result["fingerprint_match"] else "MISMATCH"
                 print(f"Fingerprint: {verdict}")
+            if "authentication" in result:
+                print(f"Authenticated pack SHA-256: {result['authenticated_pack_sha256']}")
+                print(f"Authentication: {result['authentication'].upper()}")
         return int(failed > 0)
 
     summary = {"total": len(results), "passed": len(results) - failed, "failed": failed}
@@ -334,6 +488,7 @@ def _run_extract(args: argparse.Namespace) -> int:
 _HANDLERS = {
     "export": _run_export,
     "inspect": _run_inspect,
+    "authenticate": _run_authenticate,
     "verify": _run_verify,
     "branch": _run_branch,
     "diff": _run_diff,

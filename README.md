@@ -21,6 +21,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Verified file inventory:** optionally lists every packaged path, byte size, and manifest SHA-256 after integrity checks pass.
 - **Verified manifest audit:** exposes the complete validated manifest without manually opening the ZIP archive.
 - **Transfer fingerprint:** hashes the complete `.strandpack` file and can require a received pack to match an expected SHA-256.
+- **Authenticated transfer record:** creates and verifies a detached HMAC-SHA256 record using a shared key kept in an environment variable.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes, with an optional CI-ready difference exit code.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
@@ -118,6 +119,28 @@ strands-handoff verify received.strandpack \
 prints both fingerprints and returns status `1` when the verified pack bytes do
 not match; JSON output includes `fingerprint_match`. The expected digest must be
 shared through a trusted channel if it is intended to provide authenticity.
+
+When sender and receiver share a random secret through a secret manager, create
+a detached authentication record for the exact pack bytes:
+
+```bash
+strands-handoff authenticate support-123.strandpack \
+  --key-env STRANDPACK_HMAC_KEY \
+  --output support-123.strandpack.auth.json
+
+strands-handoff verify received.strandpack \
+  --auth-record support-123.strandpack.auth.json \
+  --key-env STRANDPACK_HMAC_KEY
+```
+
+The environment value must be base64 that decodes to at least 32 random bytes;
+the key itself is never written to the record or command output. `authenticate`
+first verifies the pack, refuses to overwrite an existing record, and creates
+the record with owner-only permissions. `verify` checks pack integrity before
+using constant-time HMAC comparison. The record contains a pack SHA-256 and an
+HMAC-SHA256 tag, so it can authenticate possession of the shared key as well as
+detect changed bytes. HMAC is symmetric: it does not provide public-key sender
+identity, key distribution, key rotation, or replay protection.
 
 Verify a batch before transfer or archival:
 
@@ -262,6 +285,7 @@ All tests use synthetic sessions and run without provider credentials.
 ## Security
 
 Do not attach real session packs, tokens, or customer data to public issues. See [SECURITY.md](SECURITY.md) for private reporting and the threat boundary.
+Keep HMAC keys in a secret manager, distribute them separately from packs and authentication records, and rotate them according to your own access policy.
 
 ## License and upstream
 
