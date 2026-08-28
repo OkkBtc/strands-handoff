@@ -23,6 +23,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Transfer fingerprint:** hashes the complete `.strandpack` file and can require a received pack to match an expected SHA-256.
 - **Authenticated transfer record:** creates and verifies a detached HMAC-SHA256 record using a shared key kept in an environment variable.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
+- **Lineage verification:** validates every parent digest and session identity in an ordered, multi-generation pack derivation chain.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes, with an optional CI-ready difference exit code.
 - **Handoff summaries:** generates a Markdown report from a verified pack.
 - **Namespaced artifacts:** packages tool outputs under explicit namespaces with file-count and byte-usage metadata.
@@ -191,6 +192,25 @@ strands-handoff branch support-123.strandpack \
   --through-message 12 \
   --output support-123-review.strandpack
 ```
+
+Verify a multi-generation derivation chain before archiving or approving it:
+
+```bash
+strands-handoff verify-lineage \
+  support-123.strandpack \
+  support-123-qa.strandpack \
+  support-123-review.strandpack \
+  --json
+```
+
+The command first verifies every pack's manifest and file digests, then checks
+each child against the preceding parent using `parent_pack_sha256`,
+`parent_session_id`, and `derived_from_session_id`. It returns status `1` for a
+missing, reordered, or mismatched derivation link and status `2` for an invalid
+pack or invocation. Lineage proves that the supplied files form the recorded
+derivation sequence; it does not authenticate who created them. Use the HMAC
+authentication record separately when shared-key sender authentication is
+required.
 
 Compare two packs without replaying a model:
 

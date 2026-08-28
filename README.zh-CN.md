@@ -23,6 +23,7 @@
 - **传输指纹：** 可计算完整 `.strandpack` 文件的哈希，并要求接收的 pack 匹配预期 SHA-256。
 - **认证传输记录：** 使用保存在环境变量中的共享密钥创建并校验独立 HMAC-SHA256 记录。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
+- **血缘链验证：** 校验有序多代 pack 衍生链中每一跳的父包摘要和会话身份。
 - **结构化差异：** 显示新增、删除、变化的文件以及各 Agent 的消息数量变化，并可用退出状态直接接入 CI。
 - **交接摘要：** 根据已验证的 pack 生成 Markdown 报告。
 - **Artifact 命名空间：** 按显式命名空间打包工具输出，并记录文件数和字节用量。
@@ -182,6 +183,22 @@ strands-handoff branch support-123.strandpack \
   --through-message 12 \
   --output support-123-review.strandpack
 ```
+
+归档或审批前，可以验证多代衍生链：
+
+```bash
+strands-handoff verify-lineage \
+  support-123.strandpack \
+  support-123-qa.strandpack \
+  support-123-review.strandpack \
+  --json
+```
+
+命令会先校验每个 pack 的 Manifest 和文件摘要，再使用 `parent_pack_sha256`、
+`parent_session_id` 和 `derived_from_session_id` 检查每个子包是否确实衍生自前一个
+父包。衍生关系缺失、顺序错误或记录不匹配时返回状态 `1`；pack 或调用无效时返回
+状态 `2`。血缘链只能证明这些文件构成所记录的衍生顺序，不能认证创建者身份；如需
+基于共享密钥确认发送方，应另行使用 HMAC 认证记录。
 
 不调用模型，直接比较两个 pack：
 
