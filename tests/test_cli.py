@@ -383,6 +383,84 @@ def test_cli_diff_exit_code_detects_payload_changes(session_storage: Path, tmp_p
     assert "session/session.json" in difference["changed"]
 
 
+def test_cli_verifies_multi_generation_pack_lineage(session_storage: Path, tmp_path: Path, capsys) -> None:
+    root = tmp_path / "root.strandpack"
+    child = tmp_path / "child.strandpack"
+    grandchild = tmp_path / "grandchild.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(root)]) == 0
+    assert main(["branch", str(root), "--new-session-id", "demo-child", "--output", str(child)]) == 0
+    assert (
+        main(
+            [
+                "branch",
+                str(child),
+                "--new-session-id",
+                "demo-grandchild",
+                "--output",
+                str(grandchild),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["verify-lineage", str(root), str(child), str(grandchild), "--json"]) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["summary"] == {
+        "packs": 3,
+        "links": 2,
+        "verified": 2,
+        "failed": 0,
+        "valid": True,
+    }
+    assert [link["status"] for link in result["links"]] == ["verified", "verified"]
+    assert result["links"][1]["parent_session_id"] == "demo-child"
+
+    assert main(["verify-lineage", str(root), str(grandchild), "--json"]) == 1
+    reordered = json.loads(capsys.readouterr().out)
+    assert reordered["links"][0]["reasons"] == [
+        "parent_pack_sha256_mismatch",
+        "parent_session_id_mismatch",
+        "derived_session_id_mismatch",
+    ]
+
+
+def test_cli_lineage_blocks_wrong_order_and_non_branch_pack(session_storage: Path, tmp_path: Path, capsys) -> None:
+    root = tmp_path / "root.strandpack"
+    child = tmp_path / "child.strandpack"
+    unrelated = tmp_path / "unrelated.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(root)]) == 0
+    assert main(["branch", str(root), "--new-session-id", "demo-child", "--output", str(child)]) == 0
+    assert (
+        main(
+            [
+                "export",
+                "--storage-dir",
+                str(session_storage),
+                "--session-id",
+                "demo",
+                "--output",
+                str(unrelated),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["verify-lineage", str(child), str(root), "--json"]) == 1
+    reversed_result = json.loads(capsys.readouterr().out)
+    assert reversed_result["links"][0]["reasons"] == ["missing_branch_metadata"]
+
+    assert main(["verify-lineage", str(root), str(unrelated)]) == 1
+    output = capsys.readouterr().out
+    assert "BROKEN demo -> demo" in output
+    assert "missing_branch_metadata" in output
+
+    assert main(["verify-lineage", str(root)]) == 2
+    assert "requires at least two packs" in capsys.readouterr().err
+
+
 def test_cli_extract_dry_run_then_extract_json(session_storage: Path, tmp_path: Path, capsys) -> None:
     pack = tmp_path / "demo.strandpack"
     assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0

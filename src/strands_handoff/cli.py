@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .core import branch_pack, diff_packs, export_session, inspect_loaded, summary_markdown
+from .core import (
+    branch_pack,
+    diff_packs,
+    export_session,
+    inspect_loaded,
+    summary_markdown,
+    verify_lineage,
+)
 from .errors import HandoffError, PackIntegrityError, SessionFormatError
 from .pack import hmac_sha256_file, load_pack, prepare_extraction, sha256_file
 
@@ -193,6 +200,13 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="return status 1 when the verified pack payloads differ",
     )
+
+    lineage = commands.add_parser(
+        "verify-lineage",
+        help="verify an ordered root-to-tip pack derivation chain",
+    )
+    lineage.add_argument("pack", type=Path, nargs="+", metavar="PACK")
+    lineage.add_argument("--json", action="store_true")
 
     summary = commands.add_parser("summary", help="generate a Markdown handoff report")
     summary.add_argument("pack", type=Path)
@@ -451,6 +465,21 @@ def _run_diff(args: argparse.Namespace) -> int:
     return int(args.exit_code and differs)
 
 
+def _run_verify_lineage(args: argparse.Namespace) -> int:
+    result = verify_lineage(args.pack)
+    if args.json:
+        _print_json(result)
+    else:
+        summary = result["summary"]
+        print(f"Lineage: {summary['verified']}/{summary['links']} link(s) verified; failed={summary['failed']}")
+        for link in result["links"]:
+            verdict = "OK" if link["status"] == "verified" else "BROKEN"
+            print(f"{verdict} {link['parent_session_id']} -> {link['child_session_id']}")
+            for reason in link["reasons"]:
+                print(f"  {reason}")
+    return int(not result["summary"]["valid"])
+
+
 def _run_summary(args: argparse.Namespace) -> int:
     markdown = summary_markdown(args.pack)
     if args.output is None:
@@ -492,6 +521,7 @@ _HANDLERS = {
     "verify": _run_verify,
     "branch": _run_branch,
     "diff": _run_diff,
+    "verify-lineage": _run_verify_lineage,
     "summary": _run_summary,
     "extract": _run_extract,
 }

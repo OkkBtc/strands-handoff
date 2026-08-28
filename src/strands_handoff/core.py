@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -372,6 +373,72 @@ def diff_packs(left_path: Path, right_path: Path) -> dict[str, Any]:
             agent_id: right_inspection["agents"].get(agent_id, 0) - left_inspection["agents"].get(agent_id, 0)
             for agent_id in sorted(agent_ids)
         },
+    }
+
+
+def verify_lineage(pack_paths: Sequence[Path]) -> dict[str, Any]:
+    """Verify each child pack's recorded parent against an ordered pack chain."""
+    if len(pack_paths) < 2:
+        raise SessionFormatError("verify-lineage requires at least two packs")
+
+    nodes = []
+    for path in pack_paths:
+        resolved = path.expanduser().resolve()
+        loaded = load_pack(resolved)
+        source = loaded.manifest.get("source", {})
+        nodes.append(
+            {
+                "path": str(resolved),
+                "sha256": sha256_file(resolved),
+                "session_id": source.get("session_id"),
+                "derived_from_session_id": source.get("derived_from_session_id"),
+                "branch": loaded.manifest.get("branch"),
+            }
+        )
+
+    links = []
+    for parent, child in zip(nodes, nodes[1:], strict=False):
+        reasons = []
+        branch = child["branch"]
+        if not isinstance(branch, dict):
+            reasons.append("missing_branch_metadata")
+            recorded_sha256 = None
+            recorded_session_id = None
+        else:
+            recorded_sha256 = branch.get("parent_pack_sha256")
+            recorded_session_id = branch.get("parent_session_id")
+            if recorded_sha256 != parent["sha256"]:
+                reasons.append("parent_pack_sha256_mismatch")
+            if recorded_session_id != parent["session_id"]:
+                reasons.append("parent_session_id_mismatch")
+            if child["derived_from_session_id"] != parent["session_id"]:
+                reasons.append("derived_session_id_mismatch")
+        links.append(
+            {
+                "parent": parent["path"],
+                "child": child["path"],
+                "parent_session_id": parent["session_id"],
+                "child_session_id": child["session_id"],
+                "parent_sha256": parent["sha256"],
+                "recorded_parent_sha256": recorded_sha256,
+                "recorded_parent_session_id": recorded_session_id,
+                "status": "verified" if not reasons else "broken",
+                "reasons": reasons,
+            }
+        )
+
+    failed = sum(link["status"] == "broken" for link in links)
+    return {
+        "root": nodes[0]["path"],
+        "tip": nodes[-1]["path"],
+        "summary": {
+            "packs": len(nodes),
+            "links": len(links),
+            "verified": len(links) - failed,
+            "failed": failed,
+            "valid": failed == 0,
+        },
+        "links": links,
     }
 
 
