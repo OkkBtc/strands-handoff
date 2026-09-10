@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from strands_handoff.cli import main
+from strands_handoff.pack import load_pack, write_pack
 
 
 def test_cli_end_to_end(session_storage: Path, tmp_path: Path, capsys) -> None:
@@ -30,6 +31,92 @@ def test_cli_end_to_end(session_storage: Path, tmp_path: Path, capsys) -> None:
     assert main(["verify", str(pack)]) == 0
     assert main(["inspect", str(pack), "--json"]) == 0
     assert '"session_id": "demo"' in capsys.readouterr().out
+
+
+def test_cli_audit_accepts_clean_redacted_pack(session_storage: Path, tmp_path: Path, capsys) -> None:
+    pack = tmp_path / "clean.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(pack)]) == 0
+    capsys.readouterr()
+
+    assert main(["audit", str(pack), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["integrity"] == "ok"
+    assert result["summary"]["findings"] == 0
+    assert result["summary"]["blocking"] is False
+
+
+def test_cli_audit_blocks_residual_secrets_without_printing_them(session_storage: Path, tmp_path: Path, capsys) -> None:
+    source = tmp_path / "source.strandpack"
+    assert main(["export", "--storage-dir", str(session_storage), "--session-id", "demo", "--output", str(source)]) == 0
+    loaded = load_pack(source)
+    files = dict(loaded.files)
+    message_path = "session/agents/agent_researcher/messages/message_0.json"
+    message = json.loads(files[message_path])
+    secret = "Bearer abcdefghijklmnop"
+    message["message"]["content"][0]["text"] = secret
+    files[message_path] = json.dumps(message).encode()
+    unsafe_name = "artifacts/notes/owner@example.com.txt"
+    files[unsafe_name] = b"safe"
+    unsafe = tmp_path / "unsafe.strandpack"
+    write_pack(
+        unsafe,
+        files=files,
+        source=loaded.manifest["source"],
+        redaction=loaded.manifest["redaction"],
+        artifacts=loaded.manifest["artifacts"],
+    )
+    capsys.readouterr()
+
+    assert main(["audit", str(unsafe), "--json"]) == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["summary"]["findings"] == 2
+    assert result["summary"]["blocking"] is True
+    assert {finding["location"] for finding in result["findings"]} == {
+        "content",
+        "path",
+    }
+    assert secret not in output
+    assert "owner@example.com" not in output
+
+
+def test_cli_audit_requires_explicit_binary_review_override(session_storage: Path, tmp_path: Path, capsys) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "image.png").write_bytes(b"\x89PNG\x00")
+    pack = tmp_path / "binary.strandpack"
+    export = [
+        "export",
+        "--storage-dir",
+        str(session_storage),
+        "--session-id",
+        "demo",
+        "--artifact",
+        f"images={artifacts}",
+        "--allow-binary-artifacts",
+        "--output",
+        str(pack),
+    ]
+    assert main(export) == 0
+    capsys.readouterr()
+
+    assert main(["audit", str(pack), "--json"]) == 1
+    blocked = json.loads(capsys.readouterr().out)
+    assert blocked["summary"]["unscanned_binary_files"] == 1
+    assert blocked["summary"]["blocking"] is True
+
+    assert main(["audit", str(pack), "--allow-unscanned-binary", "--json"]) == 0
+    allowed = json.loads(capsys.readouterr().out)
+    assert allowed["summary"]["unscanned_binary_files"] == 1
+    assert allowed["summary"]["blocking"] is False
+
+
+def test_cli_audit_rejects_invalid_pack(tmp_path: Path, capsys) -> None:
+    invalid = tmp_path / "invalid.strandpack"
+    invalid.write_bytes(b"not a zip archive")
+
+    assert main(["audit", str(invalid)]) == 2
+    assert "invalid strandpack" in capsys.readouterr().err
 
 
 def test_cli_export_json_returns_machine_readable_summary(session_storage: Path, tmp_path: Path, capsys) -> None:
