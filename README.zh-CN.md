@@ -22,6 +22,7 @@
 - **已验证 Manifest 审计：** 无需手动打开 ZIP，即可查看完整且已校验的 Manifest。
 - **传输指纹：** 可计算完整 `.strandpack` 文件的哈希，并要求接收的 pack 匹配预期 SHA-256。
 - **认证传输记录：** 使用保存在环境变量中的共享密钥创建并校验独立 HMAC-SHA256 记录。
+- **传输前残留数据审计：** 校验 pack 后重新扫描路径、元数据、JSON 和文本中的敏感模式，并默认阻止未经检查的二进制内容。
 - **会话分支：** 使用新会话 ID 创建完整副本，或者创建不可恢复运行的消息边界审查分支。
 - **血缘链验证：** 校验有序多代 pack 衍生链中每一跳的父包摘要和会话身份。
 - **结构化差异：** 显示新增、删除、变化的文件以及各 Agent 的消息数量变化，并可用退出状态直接接入 CI。
@@ -105,6 +106,20 @@ strands-handoff inspect support-123.strandpack \
 元数据、分支元数据和文件记录。搭配 `--json` 时内容位于 `manifest` 字段，文本输出
 则追加独立的 JSON 区块。Manifest 仍包含元数据和路径，虽然不包含 pack 文件内容，
 分享到外部前也应人工检查。
+
+传输 pack 之前，可以运行 fail-closed 的残留数据审计：
+
+```bash
+strands-handoff audit support-123.strandpack
+strands-handoff audit support-123.strandpack --json > audit-result.json
+```
+
+`audit` 会先完成 pack 完整性校验，再使用与导出相同的保守规则重新扫描打包路径、
+Manifest 元数据、JSON 和 UTF-8 文本。输出只包含已脱敏路径、位置和问题分类，绝不会
+打印命中的秘密原文。发现残留问题时返回状态 `1`，pack 无效时返回状态 `2`。二进制
+Artifact 无法可靠扫描，因此默认阻止；使用适当的外部工具完成人工检查后，可以通过
+`--allow-unscanned-binary` 显式记录这项决定，但它不会忽略任何文本或元数据问题。
+这种模式审计适合作为传输前门禁，但不能替代专用的秘密或个人信息扫描器。
 
 收到 pack 后，可以同时验证内部清单和发送方提供的完整文件指纹：
 

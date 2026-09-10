@@ -22,6 +22,7 @@ Redaction is best-effort and the current implementation has not undergone an ind
 - **Verified manifest audit:** exposes the complete validated manifest without manually opening the ZIP archive.
 - **Transfer fingerprint:** hashes the complete `.strandpack` file and can require a received pack to match an expected SHA-256.
 - **Authenticated transfer record:** creates and verifies a detached HMAC-SHA256 record using a shared key kept in an environment variable.
+- **Pre-transfer residual-data audit:** verifies the pack, rescans paths, metadata, JSON, and text for sensitive patterns, and blocks unreviewed binary content by default.
 - **Session branches:** creates a full copy under a new session ID or a non-restorable message-boundary branch for offline review.
 - **Lineage verification:** validates every parent digest and session identity in an ordered, multi-generation pack derivation chain.
 - **Structured diff:** reports added, removed, and changed files plus per-agent message-count changes, with an optional CI-ready difference exit code.
@@ -107,6 +108,24 @@ redaction totals, Artifact metadata, branch metadata, and file records. With
 `--json` it is available under the `manifest` key; text output prints a separate
 JSON block. The manifest contains metadata and paths, so review it before
 sharing even though pack contents are not included.
+
+Before transferring a pack, run a fail-closed residual-data audit:
+
+```bash
+strands-handoff audit support-123.strandpack
+strands-handoff audit support-123.strandpack --json > audit-result.json
+```
+
+`audit` first verifies the pack and then rescans packaged paths, manifest
+metadata, JSON, and UTF-8 text using the same conservative rules as export. It
+reports only redacted paths, locations, and finding categories; matched secret
+values are never printed. Residual findings return status `1`, while an invalid pack returns
+status `2`. Binary artifacts block by default because their content cannot be
+reliably scanned. After those files have been reviewed with a suitable external
+tool, `--allow-unscanned-binary` records that explicit decision in the command
+and permits them without suppressing any text or metadata finding. This
+pattern-based audit is a practical pre-transfer gate, not a replacement for a
+dedicated secret or PII scanner.
 
 After receiving a pack, verify its internal manifest and the sender-provided
 complete-file fingerprint together:

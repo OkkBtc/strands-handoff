@@ -1,4 +1,4 @@
-"""High-level session export, branching, inspection, diff, and reporting."""
+"""High-level session export, auditing, branching, inspection, diff, and reporting."""
 
 from __future__ import annotations
 
@@ -288,6 +288,103 @@ def inspect_loaded(loaded: LoadedPack) -> dict[str, Any]:
 def inspect_pack(path: Path) -> dict[str, Any]:
     """Verify and inspect a pack without writing to the source or destination."""
     return inspect_loaded(load_pack(path))
+
+
+def audit_pack(path: Path, *, allow_unscanned_binary: bool = False) -> dict[str, Any]:
+    """Verify a pack, then detect residual sensitive data without exposing it."""
+    resolved = path.expanduser().resolve()
+    display_path = redact_text(str(resolved), RedactionReport())
+    loaded = load_pack(resolved)
+    findings: list[dict[str, Any]] = []
+    unscanned_binary_files = []
+    scanned_files = 0
+
+    manifest_metadata = {key: value for key, value in loaded.manifest.items() if key not in {"files", "artifacts"}}
+    manifest_report = RedactionReport()
+    if redact_value(manifest_metadata, manifest_report) != manifest_metadata:
+        findings.append(
+            {
+                "path": "manifest.json",
+                "location": "metadata",
+                "categories": sorted(manifest_report.counts),
+            }
+        )
+
+    for name, raw in sorted(loaded.files.items()):
+        path_report = RedactionReport()
+        safe_name = redact_text(name, path_report)
+        if safe_name != name:
+            findings.append(
+                {
+                    "path": safe_name,
+                    "location": "path",
+                    "categories": sorted(path_report.counts),
+                }
+            )
+
+        suffix = PurePosixPath(name).suffix.lower()
+        if suffix == ".json":
+            scanned_files += 1
+            try:
+                value = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                findings.append(
+                    {
+                        "path": safe_name,
+                        "location": "content",
+                        "categories": ["invalid_json"],
+                    }
+                )
+                continue
+            content_report = RedactionReport()
+            if redact_value(value, content_report) != value:
+                findings.append(
+                    {
+                        "path": safe_name,
+                        "location": "content",
+                        "categories": sorted(content_report.counts),
+                    }
+                )
+        elif suffix in _TEXT_SUFFIXES:
+            scanned_files += 1
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                findings.append(
+                    {
+                        "path": safe_name,
+                        "location": "content",
+                        "categories": ["invalid_utf8"],
+                    }
+                )
+                continue
+            content_report = RedactionReport()
+            if redact_text(text, content_report) != text:
+                findings.append(
+                    {
+                        "path": safe_name,
+                        "location": "content",
+                        "categories": sorted(content_report.counts),
+                    }
+                )
+        else:
+            unscanned_binary_files.append(safe_name)
+
+    blocking = bool(findings) or (bool(unscanned_binary_files) and not allow_unscanned_binary)
+    return {
+        "pack": display_path,
+        "integrity": "ok",
+        "summary": {
+            "files": len(loaded.files),
+            "scanned_files": scanned_files,
+            "findings": len(findings),
+            "affected_files": len({finding["path"] for finding in findings}),
+            "unscanned_binary_files": len(unscanned_binary_files),
+            "blocking": blocking,
+        },
+        "findings": findings,
+        "unscanned_binary_files": unscanned_binary_files,
+    }
 
 
 def branch_pack(

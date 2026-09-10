@@ -16,6 +16,7 @@ from typing import Any
 
 from . import __version__
 from .core import (
+    audit_pack,
     branch_pack,
     diff_packs,
     export_session,
@@ -182,6 +183,18 @@ def _parser() -> argparse.ArgumentParser:
         "--key-env",
         type=_environment_name,
         help="read the base64-encoded HMAC key from this environment variable",
+    )
+
+    audit = commands.add_parser(
+        "audit",
+        help="verify and scan a pack for residual sensitive data",
+    )
+    audit.add_argument("pack", type=Path)
+    audit.add_argument("--json", action="store_true")
+    audit.add_argument(
+        "--allow-unscanned-binary",
+        action="store_true",
+        help="do not block on binary artifacts that were reviewed separately",
     )
 
     branch = commands.add_parser("branch", help="create an isolated pack branch")
@@ -438,6 +451,31 @@ def _run_verify(args: argparse.Namespace) -> int:
     return int(failed > 0)
 
 
+def _run_audit(args: argparse.Namespace) -> int:
+    result = audit_pack(
+        args.pack,
+        allow_unscanned_binary=args.allow_unscanned_binary,
+    )
+    summary = result["summary"]
+    if args.json:
+        _print_json(result)
+    else:
+        print(
+            f"Audit: {summary['scanned_files']}/{summary['files']} payload file(s) "
+            f"scanned; findings={summary['findings']}; "
+            f"unscanned_binary={summary['unscanned_binary_files']}"
+        )
+        for finding in result["findings"]:
+            categories = ",".join(finding["categories"])
+            print(f"BLOCKED {finding['path']} ({finding['location']}): {categories}")
+        for path in result["unscanned_binary_files"]:
+            verdict = "ALLOWED" if args.allow_unscanned_binary else "BLOCKED"
+            print(f"{verdict} {path} (binary content not scanned)")
+        if not summary["blocking"]:
+            print("READY: no blocking residual-data findings")
+    return int(summary["blocking"])
+
+
 def _run_branch(args: argparse.Namespace) -> int:
     manifest = branch_pack(
         args.pack,
@@ -519,6 +557,7 @@ _HANDLERS = {
     "inspect": _run_inspect,
     "authenticate": _run_authenticate,
     "verify": _run_verify,
+    "audit": _run_audit,
     "branch": _run_branch,
     "diff": _run_diff,
     "verify-lineage": _run_verify_lineage,
